@@ -2,27 +2,29 @@
 
 import { useRef, useCallback } from 'react';
 import { cn } from '@/lib/utils';
-import { useQueryStore } from '@/store/query-store';
+import { useQueryStore, type GraphTab, type AssistantMessage } from '@/store/query-store';
 import { SidebarTrigger } from '@/components/ui/sidebar';
 import { GraphPanel } from './graph-panel';
 import { ChatPanel } from './chat-panel';
 
-const TABS = [
+const TABS: { id: GraphTab; label: string }[] = [
   { id: 'traversal',  label: 'Traversal' },
-  { id: 'all-nodes',  label: 'All nodes' },
   { id: 'amendments', label: 'Amendments' },
-] as const;
+];
 
 export function WorkspacePanel() {
-  const { latestGraph, activeTab, setActiveTab, messages } = useQueryStore();
+  const { latestGraph, latestQueryId, activeTab, setActiveTab, messages } = useQueryStore();
   const graphRef = useRef<HTMLDivElement>(null);
   const isDragging = useRef(false);
   const startX = useRef(0);
   const startW = useRef(0);
 
-  const latestAssistant = [...messages].reverse().find(m => m.role === 'assistant');
-  const nodeCount = latestAssistant?.role === 'assistant' ? latestAssistant.answer?.nodes : null;
-  const hopCount  = latestAssistant?.role === 'assistant' ? latestAssistant.answer?.hops  : null;
+  const latestAssistant = [...messages]
+    .reverse()
+    .find((m): m is AssistantMessage => m.role === 'assistant');
+  const nodeCount = latestAssistant?.answer.nodes ?? latestAssistant?.graph.nodes.length ?? null;
+  const hopCount  = latestAssistant?.answer.hops  ?? latestAssistant?.liveHops ?? null;
+  const timeMs    = latestAssistant?.answer.timeMs ?? 0;
 
   const onMouseDown = useCallback((e: React.MouseEvent) => {
     isDragging.current = true;
@@ -35,7 +37,7 @@ export function WorkspacePanel() {
       if (!isDragging.current || !graphRef.current) return;
       const dx = ev.clientX - startX.current;
       const parentW = graphRef.current.parentElement?.offsetWidth ?? 0;
-      graphRef.current.style.width = `${Math.max(280, Math.min(startW.current + dx, parentW - 280))}px`;
+      graphRef.current.style.width = `${Math.max(320, Math.min(startW.current + dx, parentW - 320))}px`;
     };
     const onUp = () => {
       isDragging.current = false;
@@ -50,13 +52,11 @@ export function WorkspacePanel() {
 
   return (
     <div className="flex flex-1 overflow-hidden">
-      {/* Graph side */}
       <div
         ref={graphRef}
         style={{ width: '52%' }}
         className="flex flex-col border-r overflow-hidden h-full"
       >
-        {/* Graph header: sidebar trigger + tabs + status badge */}
         <div className="flex items-center h-9 border-b shrink-0 px-1 gap-1">
           <SidebarTrigger className="h-7 w-7 shrink-0" />
           <div className="w-px h-4 bg-border mx-1 shrink-0" />
@@ -65,33 +65,47 @@ export function WorkspacePanel() {
               key={tab.id}
               onClick={() => setActiveTab(tab.id)}
               className={cn(
-                'h-full px-2.5 text-xs transition-colors',
+                'h-full px-2.5 text-xs transition-colors relative',
                 activeTab === tab.id
                   ? 'text-foreground font-medium'
-                  : 'text-muted-foreground hover:text-foreground'
+                  : 'text-muted-foreground hover:text-foreground',
               )}
             >
               {tab.label}
+              {activeTab === tab.id && (
+                <span className="absolute inset-x-2 bottom-0 h-px bg-primary" />
+              )}
             </button>
           ))}
           {nodeCount != null && (
-            <div className="ml-auto flex items-center gap-1.5 text-[10px] text-muted-foreground pr-2">
-              <span className="w-[5px] h-[5px] rounded-full bg-emerald-500" />
-              {nodeCount} nodes · {hopCount} hops
+            <div className="ml-auto flex items-center gap-2 text-[11px] font-mono pr-2">
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
+                <span className="w-[5px] h-[5px] rounded-full bg-emerald-500" />
+                <span className="text-foreground">{nodeCount}</span>
+                <span className="text-muted-foreground">nodes</span>
+              </span>
+              <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
+                <span className="text-foreground">{hopCount ?? 0}</span>
+                <span className="text-muted-foreground">hops</span>
+              </span>
+              {timeMs > 0 && (
+                <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
+                  <span className="text-foreground">{(timeMs / 1000).toFixed(1)}</span>
+                  <span className="text-muted-foreground">s</span>
+                </span>
+              )}
             </div>
           )}
         </div>
 
-        <GraphPanel graphData={latestGraph} />
+        <GraphPanel graphData={latestGraph} queryId={latestQueryId} tab={activeTab} />
       </div>
 
-      {/* Resize handle */}
       <div
         className="w-px bg-border hover:bg-primary/50 cursor-col-resize shrink-0 relative transition-colors after:absolute after:inset-y-0 after:-left-1 after:-right-1"
         onMouseDown={onMouseDown}
       />
 
-      {/* Chat panel */}
       <ChatPanel />
     </div>
   );

@@ -1,11 +1,13 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
-import { Loader2 } from 'lucide-react';
+import { useEffect, useMemo, useRef } from 'react';
+import { Loader2, Square, ArrowUp, Network, FileSearch } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
-import { Skeleton } from '@/components/ui/skeleton';
-import { useQueryStore, type AssistantMessage } from '@/store/query-store';
+import { MarkdownAnswer } from '@/lib/markdown';
+import { cn } from '@/lib/utils';
+import { useQueryStore, type AssistantMessage, type Message, type Mode } from '@/store/query-store';
+import type { Source } from '@/mock-data/answers';
 
 const DOT_COLOR: Record<string, string> = {
   finlex:   'oklch(62% 0.16 248)',
@@ -24,127 +26,275 @@ const TAG_CLASS: Record<string, string> = {
 function UserBubble({ question }: { question: string }) {
   return (
     <div className="flex justify-end">
-      <div className="text-xs text-muted-foreground bg-muted/50 rounded-md px-3 py-1.5 max-w-[85%] text-right leading-relaxed">
+      <div className="text-sm font-medium text-foreground/90 bg-muted/50 border rounded-md px-3 py-2 max-w-[88%] text-left leading-snug">
         {question}
       </div>
     </div>
   );
 }
 
-function AssistantBubble({ message }: { message: AssistantMessage }) {
-  if (message.loading) {
-    return (
-      <div className="space-y-2 pt-1">
-        <Skeleton className="h-3.5 w-full" />
-        <Skeleton className="h-3 w-[90%]" />
-        <Skeleton className="h-3 w-full" />
-        <Skeleton className="h-3 w-[80%]" />
-        <Skeleton className="h-3 w-[85%]" />
-        <Skeleton className="h-3 w-full" />
-        <Skeleton className="h-3 w-[70%]" />
-      </div>
-    );
-  }
+function MetaRow({ hops, nodes, timeMs, mode }: { hops: number; nodes: number; timeMs: number; mode: Mode }) {
+  return (
+    <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono mb-3 flex-wrap">
+      <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
+        <span className="w-[5px] h-[5px] rounded-full bg-emerald-500" />
+        {mode === 'graph' ? 'Graph' : 'Baseline'}
+      </span>
+      <span><span className="text-foreground font-medium">{hops}</span> hops</span>
+      <span className="text-muted-foreground/40">·</span>
+      <span><span className="text-foreground font-medium">{nodes}</span> nodes</span>
+      <span className="text-muted-foreground/40">·</span>
+      <span><span className="text-foreground font-medium">{(timeMs / 1000).toFixed(1)}s</span></span>
+    </div>
+  );
+}
 
-  const { answer } = message;
+function LoadingState({ message }: { message: AssistantMessage }) {
+  const { subQuestions, liveHops, graph, rawText } = message;
+  const phase =
+    rawText.length > 0 ? 'writing'
+      : graph.edges.length > 0 ? 'traversing'
+      : graph.nodes.length > 0 ? 'retrieving'
+      : subQuestions.length > 0 ? 'planning'
+      : 'thinking';
+
+  const phaseLabel: Record<string, string> = {
+    thinking:   'Thinking…',
+    planning:   'Decomposing question',
+    retrieving: 'Retrieving relevant statutes & guidance',
+    traversing: 'Walking the citation graph',
+    writing:    'Drafting answer',
+  };
 
   return (
-    <div>
-      {/* Meta */}
-      <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground font-mono mb-3">
-        <svg width="10" height="10" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
-          <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-          <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-        </svg>
-        <span className="text-primary font-medium">{answer.hops}</span> hops ·{' '}
-        <span className="text-primary font-medium">{answer.nodes}</span> nodes ·{' '}
-        <span className="text-primary font-medium">{(answer.timeMs / 1000).toFixed(1)}s</span>
+    <div className="space-y-3">
+      <div className="flex items-center gap-2 text-[11.5px] text-muted-foreground">
+        <Loader2 className="h-3 w-3 animate-spin text-primary" />
+        <span className="font-medium">{phaseLabel[phase]}</span>
+        {(liveHops > 0 || graph.nodes.length > 0) && (
+          <span className="font-mono text-muted-foreground/80">
+            · {graph.nodes.length} nodes · {liveHops} hops
+          </span>
+        )}
       </div>
 
-      {/* Body */}
-      <div className="text-sm leading-relaxed font-light space-y-2.5">
-        {answer.paragraphs.map((para, pi) => (
-          <p key={pi}>
-            {para.spans.map((span, si) =>
-              span.type === 'cite' ? (
-                <span
-                  key={si}
-                  className="inline-flex items-center px-1.5 py-px rounded text-[10.5px] font-mono font-medium bg-primary/10 text-primary cursor-default hover:bg-primary/20 transition-colors whitespace-nowrap"
-                >
-                  {span.content}
-                </span>
-              ) : (
-                <span key={si}>{span.content}</span>
-              )
-            )}
-          </p>
-        ))}
-      </div>
+      {subQuestions.length > 0 && (
+        <ol className="text-[12px] text-muted-foreground space-y-1.5 pl-0.5">
+          {subQuestions.map((sq, i) => (
+            <li key={i} className="flex gap-2 leading-snug">
+              <span className="font-mono text-[10px] text-muted-foreground/60 mt-0.5 shrink-0">{i + 1}.</span>
+              <span>{sq}</span>
+            </li>
+          ))}
+        </ol>
+      )}
+    </div>
+  );
+}
 
-      {/* Divider */}
-      <div className="h-px bg-border my-4" />
+function groupSources(sources: Source[]): { key: string; label: string; rows: Source[] }[] {
+  const groups = new Map<string, { label: string; rows: Source[] }>();
+  for (const s of sources) {
+    const key = s.label.trim() || s.id;
+    const g = groups.get(key);
+    if (g) g.rows.push(s);
+    else groups.set(key, { label: key, rows: [s] });
+  }
+  return Array.from(groups, ([key, g]) => ({ key, ...g }));
+}
 
-      {/* Sources */}
-      <p className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground mb-2">Sources</p>
+function SourcesList({ sources }: { sources: Source[] }) {
+  const grouped = useMemo(() => groupSources(sources), [sources]);
+  if (!sources.length) return null;
+  return (
+    <div className="mt-5">
+      <p className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground mb-2">
+        Sources <span className="text-muted-foreground/60 normal-case font-mono">· {sources.length}</span>
+      </p>
       <div className="flex flex-col gap-1.5">
-        {answer.sources.map((src) => (
-          <div
-            key={src.id}
-            className="flex items-center gap-2 px-2.5 py-1.5 rounded-md border bg-muted/30 hover:bg-muted/60 transition-colors"
-          >
-            <div className="w-[5px] h-[5px] rounded-[1.5px] shrink-0" style={{ background: DOT_COLOR[src.dotType] }} />
-            <span className="font-mono text-[10.5px] font-medium text-foreground whitespace-nowrap">{src.id}</span>
-            <span className="text-xs text-muted-foreground flex-1 min-w-0 truncate">{src.label}</span>
-            <span className={`text-[9.5px] font-mono font-medium uppercase tracking-wide px-1.5 py-px rounded ${TAG_CLASS[src.tag]}`}>
-              {src.tagLabel}
-            </span>
-          </div>
-        ))}
+        {grouped.map((g) => {
+          // For dot/tag styling, take the first row in the group.
+          const head = g.rows[0];
+          return (
+            <div
+              key={g.key}
+              className="flex items-start gap-2 px-2.5 py-1.5 rounded-md border bg-muted/30 hover:bg-muted/60 transition-colors"
+            >
+              <div
+                className="w-[5px] h-[5px] rounded-[1.5px] shrink-0 mt-1.5"
+                style={{ background: DOT_COLOR[head.dotType] }}
+              />
+              <div className="flex-1 min-w-0 flex flex-col gap-1">
+                <div className="flex items-center gap-2 min-w-0">
+                  <span className="text-[12.5px] text-foreground/90 truncate">{g.label}</span>
+                  <span
+                    className={`shrink-0 text-[9.5px] font-mono font-medium uppercase tracking-wide px-1.5 py-px rounded ${TAG_CLASS[head.tag]}`}
+                  >
+                    {head.tagLabel}
+                  </span>
+                </div>
+                <div className="flex flex-wrap gap-1">
+                  {g.rows.map((row, i) => {
+                    const globalIdx = sources.indexOf(row) + 1;
+                    return (
+                      <span
+                        key={row.id + i}
+                        title={row.id}
+                        className="inline-flex items-center gap-1 font-mono text-[10px] text-foreground/80 bg-background border rounded px-1.5 py-0.5"
+                      >
+                        <span className="text-primary/80 font-medium">[{globalIdx}]</span>
+                        <span className="text-muted-foreground">{row.id}</span>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          );
+        })}
       </div>
     </div>
   );
 }
 
+function AssistantBubble({ message }: { message: AssistantMessage }) {
+  const { answer, rawText, loading } = message;
+  const hasContent = rawText.length > 0 || answer.sources.length > 0;
+
+  if (loading && !hasContent) {
+    return <LoadingState message={message} />;
+  }
+
+  return (
+    <div>
+      <MetaRow hops={answer.hops || message.liveHops} nodes={answer.nodes || message.graph.nodes.length} timeMs={answer.timeMs} mode={message.mode} />
+      {loading && (
+        <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-2">
+          <Loader2 className="h-3 w-3 animate-spin text-primary" />
+          <span>Streaming…</span>
+        </div>
+      )}
+      <MarkdownAnswer raw={rawText} sources={answer.sources} />
+      <SourcesList sources={answer.sources} />
+    </div>
+  );
+}
+
+function ModeToggle({ mode, setMode, disabled }: { mode: Mode; setMode: (m: Mode) => void; disabled: boolean }) {
+  return (
+    <div className="inline-flex items-center rounded-md border bg-background p-0.5">
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setMode('graph')}
+        className={cn(
+          'inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-[3px] transition-colors',
+          mode === 'graph'
+            ? 'bg-primary text-primary-foreground font-medium'
+            : 'text-muted-foreground hover:text-foreground',
+          disabled && 'opacity-50 cursor-not-allowed',
+        )}
+        title="Use graph traversal (cites + amends)"
+      >
+        <Network className="h-3 w-3" /> Graph
+      </button>
+      <button
+        type="button"
+        disabled={disabled}
+        onClick={() => setMode('baseline')}
+        className={cn(
+          'inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-[3px] transition-colors',
+          mode === 'baseline'
+            ? 'bg-primary text-primary-foreground font-medium'
+            : 'text-muted-foreground hover:text-foreground',
+          disabled && 'opacity-50 cursor-not-allowed',
+        )}
+        title="Pure BM25 + vector retrieval"
+      >
+        <FileSearch className="h-3 w-3" /> Baseline
+      </button>
+    </div>
+  );
+}
+
 export function ChatPanel() {
-  const { messages, input, setInput, sendMessage } = useQueryStore();
+  const { messages, input, setInput, sendMessage, stopGeneration, mode, setMode } = useQueryStore();
   const scrollRef = useRef<HTMLDivElement>(null);
-  const isLoading = messages.some(m => m.role === 'assistant' && (m as AssistantMessage).loading);
+  const isLoading = messages.some((m): m is AssistantMessage => m.role === 'assistant' && m.loading);
 
   useEffect(() => {
     const el = scrollRef.current;
     if (el) el.scrollTop = el.scrollHeight;
-  }, [messages.length, isLoading]);
+  }, [messages, isLoading]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden min-w-0">
-      {/* Header */}
       <div className="flex items-center justify-between px-3 h-9 border-b shrink-0">
         <span className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground">Answer</span>
       </div>
 
-      {/* Thread */}
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4 space-y-5 scrollbar-thin">
-        {messages.map((msg) =>
+        {messages.length === 0 && <EmptyState />}
+        {messages.map((msg: Message) =>
           msg.role === 'user' ? (
             <UserBubble key={msg.id} question={msg.question} />
           ) : (
             <AssistantBubble key={msg.id} message={msg as AssistantMessage} />
-          )
+          ),
         )}
       </div>
 
-      {/* Input bar */}
       <div className="border-t px-3 py-2 flex items-center gap-2 shrink-0">
+        <ModeToggle mode={mode} setMode={setMode} disabled={isLoading} />
         <Input
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          onKeyDown={(e) => { if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendMessage(); } }}
+          onKeyDown={(e) => {
+            if (e.key === 'Enter' && !e.shiftKey) {
+              e.preventDefault();
+              if (!isLoading) sendMessage();
+            }
+          }}
           placeholder="Ask a follow-up…"
           className="flex-1 h-8 text-sm border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 px-0 shadow-none"
         />
-        <Button size="xs" onClick={sendMessage} disabled={isLoading || !input.trim()} className="shrink-0">
-          {isLoading ? <Loader2 className="h-3 w-3 animate-spin" /> : 'Ask'}
-        </Button>
+        {isLoading ? (
+          <Button size="xs" variant="outline" onClick={stopGeneration} className="shrink-0 gap-1" title="Stop generation">
+            <Square className="h-3 w-3" /> Stop
+          </Button>
+        ) : (
+          <Button size="xs" onClick={sendMessage} disabled={!input.trim()} className="shrink-0 gap-1">
+            <ArrowUp className="h-3 w-3" /> Ask
+          </Button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function EmptyState() {
+  const { setInput, sendMessage } = useQueryStore();
+  const examples = [
+    'What withholding tax rate applies to a foreign specialist with key-personnel status?',
+    'Mikä on pääomatuloveron enimmäisprosentti?',
+    'Under the Finland–Austria treaty, what withholding rate applies to dividends?',
+  ];
+  return (
+    <div className="h-full flex flex-col items-center justify-center text-center gap-4 py-12 text-muted-foreground">
+      <div className="space-y-1">
+        <h2 className="text-foreground/80 text-sm font-medium">Ask a Finnish tax law question</h2>
+        <p className="text-[11.5px]">Answers are grounded in Finlex statutes, Verohallinto guidance, and court rulings.</p>
+      </div>
+      <div className="flex flex-col gap-1.5 w-full max-w-md">
+        {examples.map((q) => (
+          <button
+            key={q}
+            onClick={() => { setInput(q); setTimeout(() => sendMessage(), 0); }}
+            className="text-left text-[12px] px-3 py-2 rounded-md border bg-muted/30 hover:bg-muted/60 hover:border-primary/40 transition-colors text-foreground/80"
+          >
+            {q}
+          </button>
+        ))}
       </div>
     </div>
   );
