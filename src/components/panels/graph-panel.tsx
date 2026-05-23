@@ -104,6 +104,23 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
   const runLayout = useCallback(() => {
     const cy = cyRef.current;
     if (!cy) return;
+    const edgeCount = cy.edges().length;
+    // Dagre with zero edges collapses every node to rank 0 (a single row).
+    // Treaty queries often have entry-only nodes (treaty parents are leaves
+    // in the cites/amends graph) — use a grid layout so they at least lay
+    // out cleanly in two dimensions instead of a single horizontal strip.
+    if (edgeCount === 0) {
+      cy.layout({
+        name: 'grid',
+        avoidOverlap: true,
+        avoidOverlapPadding: 14,
+        fit: true,
+        padding: 36,
+        animate: true,
+        animationDuration: 320,
+      } as Parameters<Core['layout']>[0]).run();
+      return;
+    }
     cy.layout({
       name: 'dagre',
       rankDir: 'TB',
@@ -309,6 +326,12 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
             {tab === 'amendments'
               ? 'No amendment edges in this query'
               : 'Ask a question to see the traversal graph'}
+          </div>
+        )}
+        {filtered && filtered.nodes.length > 0 && filtered.edges.length === 0 && tab === 'traversal' && (
+          <div className="absolute top-2 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md border bg-popover/95 backdrop-blur text-[11px] text-muted-foreground shadow-sm pointer-events-none">
+            Entry parents only — no <span className="font-mono text-foreground/80">cites</span> /{' '}
+            <span className="font-mono text-foreground/80">amends</span> edges from these documents
           </div>
         )}
       </div>

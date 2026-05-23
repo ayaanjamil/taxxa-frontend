@@ -108,9 +108,17 @@ interface CiteChipProps {
   onClick?: (parentId: string | null) => void;
 }
 
+function shorthand(citeId: string): string {
+  // Prefer the chunk suffix when present.
+  const m = citeId.match(/#(chunk\d+)$/i);
+  if (m) return `#${m[1]}`;
+  return citeId.length > 10 ? '…' + citeId.slice(-9) : citeId;
+}
+
 function CiteChip({ index, citeId, source, onClick }: CiteChipProps) {
-  const label = index ?? '?';
-  const title = source ? `${source.id} — ${source.label}` : citeId;
+  const resolved = index !== null;
+  const label = resolved ? String(index) : shorthand(citeId);
+  const title = source ? `${source.id} — ${source.label}` : `Unmapped: ${citeId}`;
   return (
     <sup className="mx-px">
       <button
@@ -118,7 +126,11 @@ function CiteChip({ index, citeId, source, onClick }: CiteChipProps) {
         onClick={() => onClick?.(source?.parentId ?? null)}
         title={title}
         data-cite={index ?? ''}
-        className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-[3px] text-[10px] font-mono font-medium leading-none bg-primary/12 text-primary hover:bg-primary/22 transition-colors cursor-pointer"
+        className={
+          resolved
+            ? 'inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-[3px] text-[10px] font-mono font-medium leading-none bg-primary/12 text-primary hover:bg-primary/22 transition-colors cursor-pointer'
+            : 'inline-flex items-center justify-center h-[1.1rem] px-1.5 rounded-[3px] text-[9.5px] font-mono leading-none bg-muted text-muted-foreground hover:bg-muted/80 transition-colors cursor-help'
+        }
       >
         {label}
       </button>
