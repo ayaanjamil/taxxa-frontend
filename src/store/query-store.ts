@@ -7,7 +7,8 @@ import { EMPTY_ANSWER, type AnswerData, type Source } from '@/mock-data/answers'
 import { type GraphData, type GraphNode, type GraphEdge } from '@/mock-data/graph';
 import { streamSSE } from '@/lib/sse';
 
-const API_URL = process.env.NEXT_PUBLIC_TAXXA_API ?? 'http://localhost:8000/ask';
+const RAW_API = process.env.NEXT_PUBLIC_TAXXA_API ?? 'http://localhost:8000/ask';
+const API_URL = /\/ask\/?$/.test(RAW_API) ? RAW_API : `${RAW_API.replace(/\/$/, '')}/ask`;
 const CHAT_KEY_PREFIX = 'taxxa-chat:';
 const META_KEY = 'taxxa-meta';
 
