@@ -501,7 +501,7 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
 
       <div
         ref={tooltipRef}
-        className="fixed z-50 pointer-events-none bg-popover border rounded-md px-2.5 py-1.5 text-xs text-popover-foreground max-w-[220px] shadow-md leading-snug opacity-0 transition-opacity [&_strong]:font-mono [&_strong]:text-[10px] [&_strong]:block [&_strong]:mb-0.5 [&_.tt-type]:text-[9.5px] [&_.tt-type]:uppercase [&_.tt-type]:tracking-wide [&_.tt-type]:text-muted-foreground [&_.tt-type]:block [&_.tt-type]:mb-1 [&_.tt-mono]:font-mono [&_.tt-mono]:text-[10px] [&_.tt-mono]:text-muted-foreground"
+        className="fixed z-50 pointer-events-none bg-popover border rounded-md px-2.5 py-1.5 text-xs text-popover-foreground max-w-[220px] shadow-md leading-snug opacity-0 transition-opacity [overflow-wrap:anywhere] [&_strong]:font-mono [&_strong]:text-[10px] [&_strong]:block [&_strong]:mb-0.5 [&_.tt-type]:text-[9.5px] [&_.tt-type]:uppercase [&_.tt-type]:tracking-wide [&_.tt-type]:text-muted-foreground [&_.tt-type]:block [&_.tt-type]:mb-1 [&_.tt-mono]:font-mono [&_.tt-mono]:text-[10px] [&_.tt-mono]:text-muted-foreground"
       />
     </div>
   );

@@ -74,14 +74,7 @@ export function NavEval() {
     );
   }
   if (!data.available || !data.buckets?.length) {
-    return (
-      <SidebarGroup>
-        <SidebarGroupLabel>Eval</SidebarGroupLabel>
-        <SidebarGroupContent className="px-2 pb-1">
-          <p className="text-[10.5px] text-muted-foreground">No eval runs yet. Run <span className="font-mono">scripts/run_cheap_eval.sh</span>.</p>
-        </SidebarGroupContent>
-      </SidebarGroup>
-    );
+    return null;
   }
 
   const meta = `${data.total} QA · ${data.mtime ? relativeTime(data.mtime) : 'just now'}`;
