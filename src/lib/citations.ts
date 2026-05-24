@@ -17,6 +17,8 @@ export interface CiteInfo {
   index: number;
   /** The source row this chunk's parent maps to, or null if no source claims it. */
   source: Source | null;
+  /** Human-readable chunk label (e.g. "§13 EPL" or "vero.fi #chunk19"), if backend supplied one. */
+  label: string | null;
 }
 
 export interface CiteIndex {
@@ -33,9 +35,11 @@ export interface CiteIndex {
  */
 export function buildCiteIndex(raw: string, sources: Source[]): CiteIndex {
   const chunkToSource = new Map<string, Source>();
+  const chunkToLabel = new Map<string, string>();
   for (const s of sources) {
-    for (const cid of s.chunkIds ?? []) {
-      if (!chunkToSource.has(cid)) chunkToSource.set(cid, s);
+    for (const c of s.chunks ?? []) {
+      if (!chunkToSource.has(c.id)) chunkToSource.set(c.id, s);
+      if (!chunkToLabel.has(c.id)) chunkToLabel.set(c.id, c.label);
     }
   }
 
@@ -52,6 +56,7 @@ export function buildCiteIndex(raw: string, sources: Source[]): CiteIndex {
       id,
       index: list.length + 1,
       source: chunkToSource.get(id) ?? null,
+      label: chunkToLabel.get(id) ?? null,
     };
     byId.set(id, info);
     list.push(info);

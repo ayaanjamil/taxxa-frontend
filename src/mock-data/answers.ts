@@ -1,11 +1,17 @@
+export interface SourceChunk {
+  id: string;
+  label: string;
+}
+
 export interface Source {
   id: string;
   label: string;
   dotType: 'finlex' | 'vh' | 'court' | 'repealed';
   tag: 'statute' | 'guidance' | 'court' | 'repealed';
   tagLabel: string;
-  chunkIds: string[];
+  chunks: SourceChunk[];
   parentId: string;
+  url: string | null;
 }
 
 export interface AnswerData {

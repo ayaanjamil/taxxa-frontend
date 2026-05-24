@@ -44,7 +44,7 @@ function parseBlocks(raw: string): Block[] {
 
 interface RenderOpts {
   cites: CiteIndex;
-  onCiteClick?: (parentId: string | null) => void;
+  onCiteClick?: (chunkId: string) => void;
 }
 
 function renderInline(text: string, opts: RenderOpts, keyPrefix: string): ReactNode[] {
@@ -75,6 +75,7 @@ function renderInline(text: string, opts: RenderOpts, keyPrefix: string): ReactN
               key={`${keyPrefix}-cite-${key++}`}
               index={info.index}
               citeId={id}
+              label={info.label}
               source={info.source}
               onClick={opts.onCiteClick}
             />,
@@ -107,21 +108,23 @@ function shorthand(citeId: string): string {
 interface CiteChipProps {
   index: number;
   citeId: string;
+  label: string | null;
   source: Source | null;
-  onClick?: (parentId: string | null) => void;
+  onClick?: (chunkId: string) => void;
 }
 
-function CiteChip({ index, citeId, source, onClick }: CiteChipProps) {
+function CiteChip({ index, citeId, label, source, onClick }: CiteChipProps) {
   const resolved = source !== null;
-  const title = resolved
-    ? `[${index}] ${source!.id} — ${source!.label}\n${citeId}`
-    : `[${index}] Unmapped chunk — ${citeId}`;
+  const titleLines = [
+    `[${index}] ${label ?? shorthand(citeId)}`,
+    source ? source.label : 'Unmapped chunk',
+  ];
   return (
     <sup className="mx-px">
       <button
         type="button"
-        onClick={() => onClick?.(source?.parentId ?? null)}
-        title={title}
+        onClick={() => onClick?.(citeId)}
+        title={titleLines.join('\n')}
         data-cite={index}
         className={
           resolved
@@ -138,7 +141,7 @@ function CiteChip({ index, citeId, source, onClick }: CiteChipProps) {
 interface MarkdownAnswerProps {
   raw: string;
   cites: CiteIndex;
-  onCiteClick?: (parentId: string | null) => void;
+  onCiteClick?: (chunkId: string) => void;
 }
 
 export function MarkdownAnswer({ raw, cites, onCiteClick }: MarkdownAnswerProps) {

@@ -1,7 +1,7 @@
 'use client';
 
-import { useCallback, useEffect, useMemo, useRef } from 'react';
-import { Loader2, Square, ArrowUp, Network, FileSearch, Check } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Loader2, Square, ArrowUp, Network, FileSearch, Check, Copy, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MarkdownAnswer } from '@/lib/markdown';
@@ -9,6 +9,7 @@ import { buildCiteIndex, type CiteIndex } from '@/lib/citations';
 import { cn } from '@/lib/utils';
 import { useQueryStore, type AssistantMessage, type Message, type Mode } from '@/store/query-store';
 import type { Source } from '@/mock-data/answers';
+import { ChunkSheet } from './chunk-sheet';
 
 const DOT_COLOR: Record<string, string> = {
   finlex:   'oklch(62% 0.16 248)',
@@ -36,7 +37,7 @@ function UserBubble({ question }: { question: string }) {
 
 function MetaRow({ hops, nodes, timeMs, mode }: { hops: number; nodes: number; timeMs: number; mode: Mode }) {
   return (
-    <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono mb-3 flex-wrap">
+    <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono flex-wrap min-w-0 flex-1">
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
         <span className="w-[5px] h-[5px] rounded-full bg-emerald-500" />
         {mode === 'graph' ? 'Graph' : 'Baseline'}
@@ -128,10 +129,12 @@ function SourcesList({
   sources,
   cites,
   listRef,
+  onChunkOpen,
 }: {
   sources: Source[];
   cites: CiteIndex;
   listRef: React.RefObject<HTMLDivElement | null>;
+  onChunkOpen: (chunkId: string) => void;
 }) {
   const grouped = useMemo(() => groupSources(sources), [sources]);
   if (!sources.length) return null;
@@ -144,8 +147,10 @@ function SourcesList({
         {grouped.map((g) => {
           const head = g.rows[0];
           const parentIds = g.rows.map((r) => r.parentId).filter(Boolean);
-          // Collect footnote numbers from every parent in this group.
+          // Collect footnote numbers from every parent in this group, in order.
           const cited = parentIds.flatMap((pid) => cites.bySourceParentId.get(pid) ?? []);
+          // First chunk of the first source-row makes a sensible default preview target.
+          const previewChunkId = g.rows[0].chunks?.[0]?.id ?? null;
           return (
             <div
               key={g.key}
@@ -161,32 +166,55 @@ function SourcesList({
                   {cited.length > 0 && (
                     <span className="shrink-0 inline-flex items-center gap-0.5 font-mono text-[10px] font-medium">
                       {cited.map((info) => (
-                        <span
+                        <button
                           key={info.id}
-                          title={info.id}
-                          className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-[3px] bg-primary/12 text-primary"
+                          type="button"
+                          onClick={() => onChunkOpen(info.id)}
+                          title={`Open ${info.label ?? info.id}`}
+                          className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-[3px] bg-primary/12 text-primary hover:bg-primary/22 cursor-pointer transition-colors"
                         >
                           {info.index}
-                        </span>
+                        </button>
                       ))}
                     </span>
                   )}
-                  <span className="text-[12.5px] text-foreground/90 truncate">{g.label}</span>
+                  <button
+                    type="button"
+                    onClick={() => previewChunkId && onChunkOpen(previewChunkId)}
+                    className="text-[12.5px] text-foreground/90 truncate text-left hover:underline decoration-muted-foreground/40 underline-offset-2 cursor-pointer min-w-0 flex-1"
+                    title="Preview source text"
+                  >
+                    {g.label}
+                  </button>
                   <span
                     className={`shrink-0 text-[9.5px] font-mono font-medium uppercase tracking-wide px-1.5 py-px rounded ${TAG_CLASS[head.tag]}`}
                   >
                     {head.tagLabel}
                   </span>
+                  {head.url && (
+                    <a
+                      href={head.url}
+                      target="_blank"
+                      rel="noreferrer"
+                      onClick={(e) => e.stopPropagation()}
+                      title="Search original on vero.fi / finlex.fi"
+                      className="shrink-0 inline-flex items-center justify-center h-[1.1rem] w-[1.1rem] rounded text-muted-foreground hover:text-primary hover:bg-primary/10 transition-colors"
+                    >
+                      <ExternalLink className="h-3 w-3" />
+                    </a>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {g.rows.map((row, i) => (
-                    <span
-                      key={row.id + i}
-                      title={row.id}
-                      className="font-mono text-[10px] text-muted-foreground bg-background border rounded px-1.5 py-0.5"
+                  {Array.from(new Map((head.chunks ?? []).map((c) => [c.id, c])).values()).map((c) => (
+                    <button
+                      key={c.id}
+                      type="button"
+                      onClick={() => onChunkOpen(c.id)}
+                      title={c.id}
+                      className="font-mono text-[10px] text-muted-foreground bg-background border rounded px-1.5 py-0.5 hover:text-foreground hover:border-primary/40 transition-colors"
                     >
-                      {row.id}
-                    </span>
+                      {c.label}
+                    </button>
                   ))}
                 </div>
               </div>
@@ -195,6 +223,36 @@ function SourcesList({
         })}
       </div>
     </div>
+  );
+}
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  return (
+    <button
+      type="button"
+      onClick={async () => {
+        try {
+          await navigator.clipboard.writeText(text);
+          setCopied(true);
+          setTimeout(() => setCopied(false), 1400);
+        } catch {
+          /* no-op — older browsers without clipboard permission */
+        }
+      }}
+      title="Copy answer as markdown"
+      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+    >
+      {copied ? (
+        <>
+          <Check className="h-3 w-3 text-emerald-500" /> Copied
+        </>
+      ) : (
+        <>
+          <Copy className="h-3 w-3" /> Copy
+        </>
+      )}
+    </button>
   );
 }
 
@@ -208,6 +266,8 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
   // scroll past the answer.
   const answerEndRef = useRef<HTMLDivElement>(null);
   const cites = useMemo(() => buildCiteIndex(rawText, answer.sources), [rawText, answer.sources]);
+  const [drawerChunk, setDrawerChunk] = useState<string | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
 
   useEffect(() => {
     if (loading && rawText) {
@@ -215,19 +275,9 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
     }
   }, [rawText, loading]);
 
-  const handleCiteClick = useCallback((parentId: string | null) => {
-    if (!parentId) return;
-    const root = sourcesRef.current;
-    if (!root) return;
-    // Match against the space-separated list; some grouped rows hold multiple parentIds.
-    const row = Array.from(root.querySelectorAll<HTMLDivElement>('[data-source-parents]'))
-      .find((el) => (el.dataset.sourceParents ?? '').split(' ').includes(parentId));
-    if (!row) return;
-    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
-    row.classList.remove('tx-source-pulse');
-    // Force reflow so the animation re-triggers on consecutive clicks.
-    void row.offsetWidth;
-    row.classList.add('tx-source-pulse');
+  const openChunk = useCallback((chunkId: string) => {
+    setDrawerChunk(chunkId);
+    setDrawerOpen(true);
   }, []);
 
   if (loading && !hasContent) {
@@ -236,16 +286,20 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
 
   return (
     <div>
-      <MetaRow hops={answer.hops || message.liveHops} nodes={answer.nodes || message.graph.nodes.length} timeMs={answer.timeMs} mode={message.mode} />
+      <div className="flex items-center gap-2 mb-3">
+        <MetaRow hops={answer.hops || message.liveHops} nodes={answer.nodes || message.graph.nodes.length} timeMs={answer.timeMs} mode={message.mode} />
+        {rawText && !loading && <CopyButton text={rawText} />}
+      </div>
       {loading && (
         <div className="flex items-center gap-2 text-[11px] text-muted-foreground mb-2">
           <Loader2 className="h-3 w-3 animate-spin text-primary" />
           <span>Streaming…</span>
         </div>
       )}
-      <MarkdownAnswer raw={rawText} cites={cites} onCiteClick={handleCiteClick} />
+      <MarkdownAnswer raw={rawText} cites={cites} onCiteClick={openChunk} />
       <div ref={answerEndRef} aria-hidden className="h-px" />
-      <SourcesList sources={answer.sources} cites={cites} listRef={sourcesRef} />
+      <SourcesList sources={answer.sources} cites={cites} listRef={sourcesRef} onChunkOpen={openChunk} />
+      <ChunkSheet chunkId={drawerChunk} open={drawerOpen} onOpenChange={setDrawerOpen} />
     </div>
   );
 }

@@ -63,16 +63,35 @@ function edgeStyleData(e: GraphEdge) {
   };
 }
 
+function makeStubNode(id: string): GraphNode {
+  const tail = id.split(/[\/#]/).filter(Boolean).pop() ?? id;
+  return {
+    id,
+    type: 'ARTICLE',
+    label: tail.length > 28 ? tail.slice(0, 27) + '…' : tail,
+    superseded: false,
+    desc: 'Graph-walk endpoint',
+  };
+}
+
 function filterGraph(g: GraphData, tab: 'traversal' | 'amendments'): GraphData {
   if (tab === 'traversal') return g;
   // Amendments: keep only amends/repeals edges and their endpoint nodes.
+  // Backend doesn't always emit an entry event for hop endpoints, so we
+  // synthesize stubs here too — otherwise filtered.nodes is empty even when
+  // there are real amends edges to show.
   const keepEdges = g.edges.filter((e) => e.relation === 'amends' || e.relation === 'repeals');
-  const keepIds = new Set<string>();
-  keepEdges.forEach((e) => { keepIds.add(e.source); keepIds.add(e.target); });
-  const keepNodes = g.nodes.filter((n) => keepIds.has(n.id) || n.superseded);
-  // Include superseded nodes always so amendment context is visible.
-  keepNodes.forEach((n) => keepIds.add(n.id));
-  return { nodes: keepNodes, edges: keepEdges.filter((e) => keepIds.has(e.source) && keepIds.has(e.target)) };
+  const nodeById = new Map(g.nodes.map((n) => [n.id, n] as const));
+  const keepNodes: GraphNode[] = [];
+  const seen = new Set<string>();
+  for (const e of keepEdges) {
+    for (const id of [e.source, e.target]) {
+      if (seen.has(id)) continue;
+      seen.add(id);
+      keepNodes.push(nodeById.get(id) ?? makeStubNode(id));
+    }
+  }
+  return { nodes: keepNodes, edges: keepEdges };
 }
 
 export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
@@ -213,16 +232,18 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
               label: 'data(relation)',
               'font-family': 'ui-sans-serif, sans-serif',
               'font-size': '9px',
-              color: 'oklch(40% 0.012 272)',
+              // Cytoscape's internal color parser doesn't grok oklch(); use
+              // hex so the label foreground/halo render correctly.
+              color: '#3a3a45',
               'text-opacity': 0,
-              'text-background-color': 'oklch(100% 0 0)',
-              'text-background-opacity': 0,
-              'text-background-padding': '2px',
-              'transition-property': 'opacity, text-opacity, width',
+              'text-outline-color': '#ffffff',
+              'text-outline-width': 2,
+              'text-outline-opacity': 0,
+              'transition-property': 'opacity, text-opacity, text-outline-opacity, width',
               'transition-duration': '0.18s',
             } as unknown as cytoscape.Css.Edge,
           },
-          { selector: 'edge.highlighted', style: { opacity: 1, width: 2.5, 'text-opacity': 1, 'text-background-opacity': 0.95, 'z-index': 10 } as unknown as cytoscape.Css.Edge },
+          { selector: 'edge.highlighted', style: { opacity: 1, width: 2.5, 'text-opacity': 1, 'text-outline-opacity': 1, 'z-index': 10 } as unknown as cytoscape.Css.Edge },
           { selector: 'edge.newly-added', style: { 'line-color': 'oklch(64% 0.18 282)', 'target-arrow-color': 'oklch(64% 0.18 282)', width: 2.5 } as unknown as cytoscape.Css.Edge },
           { selector: 'node.faded, edge.faded', style: { opacity: 0.12 } as unknown as cytoscape.Css.Node },
         ],
@@ -299,14 +320,36 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
       lastTabRef.current = tab;
     }
 
-    const newNodes = filtered.nodes.filter((n) => !seenNodesRef.current.has(n.id));
-    const newEdges = filtered.edges.filter((e) => {
-      const id = edgeId(e);
-      if (seenEdgesRef.current.has(id)) return false;
-      const hasSrc = seenNodesRef.current.has(e.source) || newNodes.some((n) => n.id === e.source);
-      const hasTgt = seenNodesRef.current.has(e.target) || newNodes.some((n) => n.id === e.target);
-      return hasSrc && hasTgt;
-    });
+    const baseNewNodes = filtered.nodes.filter((n) => !seenNodesRef.current.has(n.id));
+
+    // For every edge we're about to add, ensure both endpoints exist in the
+    // graph — if not, synthesize a stub node so the edge can still draw.
+    // The backend sometimes can't find a chunk to build a full node for a
+    // graph-walk endpoint; without this fallback those hops disappear and
+    // dagre collapses everything to the grid fallback.
+    const knownIds = new Set<string>([
+      ...seenNodesRef.current,
+      ...baseNewNodes.map((n) => n.id),
+    ]);
+    const stubNodes: GraphNode[] = [];
+    for (const e of filtered.edges) {
+      if (seenEdgesRef.current.has(edgeId(e))) continue;
+      for (const endpoint of [e.source, e.target]) {
+        if (knownIds.has(endpoint)) continue;
+        const tail = endpoint.split(/[\/#]/).filter(Boolean).pop() ?? endpoint;
+        stubNodes.push({
+          id: endpoint,
+          type: 'ARTICLE',
+          label: tail.length > 28 ? tail.slice(0, 27) + '…' : tail,
+          superseded: false,
+          desc: 'Graph-walk endpoint',
+        });
+        knownIds.add(endpoint);
+      }
+    }
+    const newNodes = [...baseNewNodes, ...stubNodes];
+
+    const newEdges = filtered.edges.filter((e) => !seenEdgesRef.current.has(edgeId(e)));
 
     if (newNodes.length === 0 && newEdges.length === 0) return;
 
@@ -346,20 +389,25 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
           will throw NotFoundError on removeChild when state changes. */}
       <div className="relative flex-1 min-h-0">
         <div ref={containerRef} className="h-full w-full bg-background" />
-        {(!filtered || filtered.nodes.length === 0) && (
-          <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground text-xs text-center pointer-events-none">
-            <svg width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" className="opacity-25">
-              <circle cx="18" cy="5" r="3" />
-              <circle cx="6" cy="12" r="3" />
-              <circle cx="18" cy="19" r="3" />
-              <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
-              <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
-            </svg>
-            {tab === 'amendments'
-              ? 'No amendment edges in this query'
-              : 'Ask a question to see the traversal graph'}
-          </div>
-        )}
+        {(() => {
+          const isEmpty = !filtered
+            || (tab === 'amendments' ? filtered.edges.length === 0 : filtered.nodes.length === 0);
+          if (!isEmpty) return null;
+          return (
+            <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground text-xs text-center pointer-events-none">
+              <svg width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" className="opacity-25">
+                <circle cx="18" cy="5" r="3" />
+                <circle cx="6" cy="12" r="3" />
+                <circle cx="18" cy="19" r="3" />
+                <line x1="8.59" y1="13.51" x2="15.42" y2="17.49" />
+                <line x1="15.41" y1="6.51" x2="8.59" y2="10.49" />
+              </svg>
+              {tab === 'amendments'
+                ? 'No amendment edges in this query'
+                : 'Ask a question to see the traversal graph'}
+            </div>
+          );
+        })()}
         {filtered && filtered.nodes.length > 0 && filtered.edges.length === 0 && tab === 'traversal' && (
           <div className="absolute top-2 left-1/2 -translate-x-1/2 px-2.5 py-1 rounded-md border bg-popover/95 backdrop-blur text-[11px] text-muted-foreground shadow-sm pointer-events-none">
             Entry parents only — no <span className="font-mono text-foreground/80">cites</span> /{' '}
