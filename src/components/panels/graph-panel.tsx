@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useCallback, useMemo } from 'react';
+import { useEffect, useRef, useCallback, useMemo, useState } from 'react';
 import { Maximize2, Download } from 'lucide-react';
 import cytoscape, { type Core } from 'cytoscape';
 import dagre from 'cytoscape-dagre';
@@ -83,6 +83,9 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
   const seenEdgesRef = useRef<Set<string>>(new Set());
   const lastQueryIdRef = useRef<string | null>(null);
   const lastTabRef = useRef<'traversal' | 'amendments'>('traversal');
+  // Re-trigger the data-sync effect after Cytoscape finishes init. Without this,
+  // a graph loaded from IDB before init completes would never get added to cy.
+  const [cyReady, setCyReady] = useState(false);
 
   const filtered = useMemo(
     () => (graphData ? filterGraph(graphData, tab) : null),
@@ -225,6 +228,7 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
         ],
       });
       cyRef.current = cy;
+      setCyReady(true);
 
       const getRect = () => container.getBoundingClientRect();
 
@@ -273,6 +277,7 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
       observer.disconnect();
       cyRef.current?.destroy();
       cyRef.current = null;
+      setCyReady(false);
       seenNodesRef.current.clear();
       seenEdgesRef.current.clear();
     };
@@ -317,7 +322,7 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
     setTimeout(() => added.removeClass('newly-added'), 700);
 
     runLayout();
-  }, [filtered, queryId, tab, runLayout]);
+  }, [filtered, queryId, tab, runLayout, cyReady]);
 
   return (
     <div className="flex flex-col h-full">
@@ -340,7 +345,7 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
           Cytoscape mutates its container's DOM directly and React's reconciler
           will throw NotFoundError on removeChild when state changes. */}
       <div className="relative flex-1 min-h-0">
-        <div ref={containerRef} className="absolute inset-0 bg-background" />
+        <div ref={containerRef} className="h-full w-full bg-background" />
         {(!filtered || filtered.nodes.length === 0) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground text-xs text-center pointer-events-none">
             <svg width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" className="opacity-25">

@@ -202,7 +202,18 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
   const { answer, rawText, loading } = message;
   const hasContent = rawText.length > 0 || answer.sources.length > 0;
   const sourcesRef = useRef<HTMLDivElement>(null);
+  // Sentinel placed between the answer text and the sources list. While
+  // streaming, we keep this in view so the latest text sits near the bottom
+  // of the viewport — sources stay below the fold instead of yanking the
+  // scroll past the answer.
+  const answerEndRef = useRef<HTMLDivElement>(null);
   const cites = useMemo(() => buildCiteIndex(rawText, answer.sources), [rawText, answer.sources]);
+
+  useEffect(() => {
+    if (loading && rawText) {
+      answerEndRef.current?.scrollIntoView({ block: 'end', behavior: 'auto' });
+    }
+  }, [rawText, loading]);
 
   const handleCiteClick = useCallback((parentId: string | null) => {
     if (!parentId) return;
@@ -233,6 +244,7 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
         </div>
       )}
       <MarkdownAnswer raw={rawText} cites={cites} onCiteClick={handleCiteClick} />
+      <div ref={answerEndRef} aria-hidden className="h-px" />
       <SourcesList sources={answer.sources} cites={cites} listRef={sourcesRef} />
     </div>
   );
@@ -278,12 +290,21 @@ function ModeToggle({ mode, setMode, disabled }: { mode: Mode; setMode: (m: Mode
 export function ChatPanel() {
   const { messages, input, setInput, sendMessage, stopGeneration, mode, setMode } = useQueryStore();
   const scrollRef = useRef<HTMLDivElement>(null);
+  const prevCountRef = useRef(messages.length);
   const isLoading = messages.some((m): m is AssistantMessage => m.role === 'assistant' && m.loading);
 
+  // Only scroll to bottom when a NEW message is added (not on every token
+  // update). Mid-stream scrolling is handled by AssistantBubble's answerEndRef
+  // so the view tracks the answer text, not the sources list below it.
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el) el.scrollTop = el.scrollHeight;
-  }, [messages, isLoading]);
+    if (messages.length > prevCountRef.current) {
+      requestAnimationFrame(() => {
+        const el = scrollRef.current;
+        if (el) el.scrollTop = el.scrollHeight;
+      });
+    }
+    prevCountRef.current = messages.length;
+  }, [messages.length]);
 
   return (
     <div className="flex flex-col flex-1 overflow-hidden min-w-0">
