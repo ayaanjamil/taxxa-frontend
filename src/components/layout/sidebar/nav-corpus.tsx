@@ -30,9 +30,11 @@ const COLOR_STYLE: Record<GroupColor, string> = {
 };
 
 const GROUP_ICON: Record<GroupColor, React.ReactNode> = {
-  blue:   <FileText className="shrink-0" />,
-  green:  <BookOpen className="shrink-0" />,
-  orange: <Scale className="shrink-0" />,
+  // size-4 is explicit because the icon sits inside a colored <span>, which
+  // breaks the SidebarMenuButton's `[&>svg]:size-4` direct-child selector.
+  blue:   <FileText className="shrink-0 size-4" />,
+  green:  <BookOpen className="shrink-0 size-4" />,
+  orange: <Scale className="shrink-0 size-4" />,
 };
 
 function buildGroups(stats: StatsPayload | null): CorpusGroup[] {
@@ -83,29 +85,39 @@ export function NavCorpus() {
     <SidebarGroup>
       <SidebarGroupLabel>Corpus</SidebarGroupLabel>
       <SidebarMenu>
-        {groups.map((group) => (
-          <Collapsible key={group.id} asChild defaultOpen className="group/collapsible">
-            <SidebarMenuItem>
-              <CollapsibleTrigger asChild>
-                <SidebarMenuButton tooltip={group.label}>
-                  <span style={{ color: COLOR_STYLE[group.color] }}>{GROUP_ICON[group.color]}</span>
-                  <span>{group.label}</span>
-                  <span className="ml-auto text-[10px] font-mono text-muted-foreground">
-                    {group.count.toLocaleString()}
-                  </span>
-                  <ChevronRight className="ml-1 shrink-0 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+        {groups.map((group) => {
+          const hasChildren = group.children.length > 0;
+          const header = (
+            <>
+              <span style={{ color: COLOR_STYLE[group.color] }}>{GROUP_ICON[group.color]}</span>
+              <span>{group.label}</span>
+              <span className="ml-auto text-[10px] font-mono text-muted-foreground">
+                {group.count.toLocaleString()}
+              </span>
+              {hasChildren && (
+                <ChevronRight className="ml-1 shrink-0 size-4 transition-transform duration-200 group-data-[state=open]/collapsible:rotate-90" />
+              )}
+            </>
+          );
+          if (!hasChildren) {
+            // No breakdown to show — render as a non-interactive row, no chevron.
+            return (
+              <SidebarMenuItem key={group.id}>
+                <SidebarMenuButton tooltip={group.label} className="cursor-default hover:bg-transparent">
+                  {header}
                 </SidebarMenuButton>
-              </CollapsibleTrigger>
-              <CollapsibleContent>
-                <SidebarMenuSub>
-                  {group.children.length === 0 ? (
-                    <SidebarMenuSubItem>
-                      <span className="text-[10px] text-muted-foreground px-2 py-1">
-                        {stats ? 'No breakdown' : 'Loading…'}
-                      </span>
-                    </SidebarMenuSubItem>
-                  ) : (
-                    group.children.map((child) => (
+              </SidebarMenuItem>
+            );
+          }
+          return (
+            <Collapsible key={group.id} asChild defaultOpen className="group/collapsible">
+              <SidebarMenuItem>
+                <CollapsibleTrigger asChild>
+                  <SidebarMenuButton tooltip={group.label}>{header}</SidebarMenuButton>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <SidebarMenuSub>
+                    {group.children.map((child) => (
                       <SidebarMenuSubItem key={child.name}>
                         <SidebarMenuSubButton>
                           <span
@@ -116,13 +128,13 @@ export function NavCorpus() {
                           <span className="ml-auto text-[10px] font-mono text-muted-foreground">{child.detail}</span>
                         </SidebarMenuSubButton>
                       </SidebarMenuSubItem>
-                    ))
-                  )}
-                </SidebarMenuSub>
-              </CollapsibleContent>
-            </SidebarMenuItem>
-          </Collapsible>
-        ))}
+                    ))}
+                  </SidebarMenuSub>
+                </CollapsibleContent>
+              </SidebarMenuItem>
+            </Collapsible>
+          );
+        })}
       </SidebarMenu>
     </SidebarGroup>
   );

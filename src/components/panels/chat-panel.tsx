@@ -35,7 +35,13 @@ function UserBubble({ question }: { question: string }) {
   );
 }
 
-function MetaRow({ hops, nodes, timeMs, mode }: { hops: number; nodes: number; timeMs: number; mode: Mode }) {
+function MetaRow({
+  hops, nodes, timeMs, mode, phaseMs,
+}: {
+  hops: number; nodes: number; timeMs: number; mode: Mode;
+  phaseMs: { plan: number; retrieve: number; hops: number; synth: number } | null;
+}) {
+  const fmt = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`);
   return (
     <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono flex-wrap min-w-0 flex-1">
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
@@ -47,6 +53,20 @@ function MetaRow({ hops, nodes, timeMs, mode }: { hops: number; nodes: number; t
       <span><span className="text-foreground font-medium">{nodes}</span> nodes</span>
       <span className="text-muted-foreground/40">·</span>
       <span><span className="text-foreground font-medium">{(timeMs / 1000).toFixed(1)}s</span></span>
+      {phaseMs && (
+        <span
+          className="inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded bg-muted/40 border text-[10px]"
+          title={`plan ${fmt(phaseMs.plan)} · retrieve ${fmt(phaseMs.retrieve)} · hops ${fmt(phaseMs.hops)} · synth ${fmt(phaseMs.synth)}`}
+        >
+          <span><span className="text-muted-foreground/60">plan</span> {fmt(phaseMs.plan)}</span>
+          <span className="text-muted-foreground/30">·</span>
+          <span><span className="text-muted-foreground/60">retr</span> {fmt(phaseMs.retrieve)}</span>
+          <span className="text-muted-foreground/30">·</span>
+          <span><span className="text-muted-foreground/60">hops</span> {fmt(phaseMs.hops)}</span>
+          <span className="text-muted-foreground/30">·</span>
+          <span><span className="text-muted-foreground/60">synth</span> {fmt(phaseMs.synth)}</span>
+        </span>
+      )}
     </div>
   );
 }
@@ -267,7 +287,23 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
   const answerEndRef = useRef<HTMLDivElement>(null);
   const cites = useMemo(() => buildCiteIndex(rawText, answer.sources), [rawText, answer.sources]);
   const [drawerChunk, setDrawerChunk] = useState<string | null>(null);
+  const [drawerScore, setDrawerScore] = useState<number | null>(null);
+  const [drawerRank, setDrawerRank] = useState<number | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
+
+  // Build a chunk-id → {score, rank} lookup from the current sources list so
+  // any drawer-open (whether triggered by a [N] chip in the answer or by a
+  // chunk pill in the sources list) can attach the right retrieval metadata.
+  const chunkMeta = useMemo(() => {
+    const m = new Map<string, { score: number | null; rank: number | null }>();
+    for (const s of answer.sources) {
+      for (const c of s.chunks ?? []) {
+        m.set(c.id, { score: c.score ?? null, rank: c.rank ?? null });
+      }
+    }
+    return m;
+  }, [answer.sources]);
+  const pulseNode = useQueryStore((s) => s.pulseNode);
 
   useEffect(() => {
     if (loading && rawText) {
@@ -275,10 +311,27 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
     }
   }, [rawText, loading]);
 
+  // When new citations register during streaming, pulse their parent in the
+  // graph. We track the most recent cite-list length we already pulsed so each
+  // cite only fires once. Only pulses while loading — once done, no more
+  // unsolicited graph activity.
+  const pulsedUpToRef = useRef(0);
+  useEffect(() => {
+    if (!loading) { pulsedUpToRef.current = cites.list.length; return; }
+    const fresh = cites.list.slice(pulsedUpToRef.current);
+    for (const info of fresh) {
+      if (info.source?.parentId) pulseNode(info.source.parentId);
+    }
+    pulsedUpToRef.current = cites.list.length;
+  }, [cites.list, loading, pulseNode]);
+
   const openChunk = useCallback((chunkId: string) => {
+    const meta = chunkMeta.get(chunkId);
     setDrawerChunk(chunkId);
+    setDrawerScore(meta?.score ?? null);
+    setDrawerRank(meta?.rank ?? null);
     setDrawerOpen(true);
-  }, []);
+  }, [chunkMeta]);
 
   if (loading && !hasContent) {
     return <LoadingState message={message} />;
@@ -287,7 +340,7 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
   return (
     <div>
       <div className="flex items-center gap-2 mb-3">
-        <MetaRow hops={answer.hops || message.liveHops} nodes={answer.nodes || message.graph.nodes.length} timeMs={answer.timeMs} mode={message.mode} />
+        <MetaRow hops={answer.hops || message.liveHops} nodes={answer.nodes || message.graph.nodes.length} timeMs={answer.timeMs} mode={message.mode} phaseMs={answer.phaseMs} />
         {rawText && !loading && <CopyButton text={rawText} />}
       </div>
       {loading && (
@@ -299,7 +352,7 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
       <MarkdownAnswer raw={rawText} cites={cites} onCiteClick={openChunk} />
       <div ref={answerEndRef} aria-hidden className="h-px" />
       <SourcesList sources={answer.sources} cites={cites} listRef={sourcesRef} onChunkOpen={openChunk} />
-      <ChunkSheet chunkId={drawerChunk} open={drawerOpen} onOpenChange={setDrawerOpen} />
+      <ChunkSheet chunkId={drawerChunk} open={drawerOpen} onOpenChange={setDrawerOpen} score={drawerScore} rank={drawerRank} />
     </div>
   );
 }

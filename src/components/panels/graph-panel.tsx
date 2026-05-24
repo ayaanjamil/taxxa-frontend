@@ -11,11 +11,45 @@ import {
   type GraphEdge,
   NODE_COLORS,
   SUPERSEDED_COLORS,
+  SUBQ_COLORS,
   EDGE_COLORS,
 } from '@/mock-data/graph';
+import { useQueryStore } from '@/store/query-store';
 
 if (typeof window !== 'undefined') {
   cytoscape.use(dagre);
+}
+
+function SubQLegend() {
+  const subQuestions = useQueryStore((s) => {
+    // Use the last assistant message's sub-questions — that's the one whose
+    // graph is showing.
+    for (let i = s.messages.length - 1; i >= 0; i--) {
+      const m = s.messages[i];
+      if (m.role === 'assistant') return m.subQuestions;
+    }
+    return [];
+  });
+  if (!subQuestions || subQuestions.length === 0) return null;
+  return (
+    <div className="flex items-start gap-2 px-3 py-1.5 border-t shrink-0 flex-wrap">
+      <span className="text-[10px] uppercase tracking-wide text-muted-foreground font-medium pt-0.5 shrink-0">
+        sub-q
+      </span>
+      <div className="flex flex-col gap-0.5 min-w-0 flex-1">
+        {subQuestions.map((sq, i) => (
+          <div key={i} className="flex items-center gap-1.5 text-[10.5px] text-muted-foreground min-w-0">
+            <span
+              className="inline-block w-[10px] h-[10px] rounded-[2px] shrink-0 border-2"
+              style={{ borderColor: SUBQ_COLORS[i % SUBQ_COLORS.length], background: 'transparent' }}
+            />
+            <span className="font-mono text-[9.5px] text-muted-foreground/60 shrink-0">{i + 1}</span>
+            <span className="truncate">{sq}</span>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
 }
 
 interface GraphPanelProps {
@@ -36,6 +70,12 @@ const TRUNCATE_LABEL = (label: string, max = 28) =>
 
 function nodeStyleData(n: GraphNode) {
   const c = n.superseded ? SUPERSEDED_COLORS : (NODE_COLORS[n.type] ?? NODE_COLORS.ARTICLE);
+  // Border tinted by which sub-question retrieved this node. Graph-walk
+  // endpoints (subIdx null/undefined) keep the type-default border so they
+  // visually read as "found by traversal, not the planner".
+  const subBorder = n.subIdx != null && n.subIdx >= 0
+    ? SUBQ_COLORS[n.subIdx % SUBQ_COLORS.length]
+    : c.border;
   return {
     id: n.id,
     label: TRUNCATE_LABEL(n.label),
@@ -43,8 +83,10 @@ function nodeStyleData(n: GraphNode) {
     type: n.type,
     superseded: n.superseded,
     desc: n.desc,
+    subIdx: n.subIdx ?? -1,
     bg: c.bg,
-    border: c.border,
+    border: subBorder,
+    borderWidth: n.subIdx != null && n.subIdx >= 0 ? 2.5 : 1.4,
     textColor: c.text,
   };
 }
@@ -199,7 +241,10 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
             style: {
               'background-color': 'data(bg)',
               'border-color': 'data(border)',
-              'border-width': 1.5,
+              // Thicker border when colored by sub-question (data-driven so
+              // graph-walk endpoints stay thin and let the planner's results
+              // visually dominate).
+              'border-width': 'data(borderWidth)',
               color: 'data(textColor)',
               label: 'data(label)',
               'font-family': 'ui-monospace, monospace',
@@ -219,6 +264,8 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
           { selector: 'node[?superseded]', style: { opacity: 0.5, 'border-style': 'dashed' } as unknown as cytoscape.Css.Node },
           { selector: 'node.highlighted', style: { 'border-width': 2.5, 'border-color': 'oklch(64% 0.18 282)', 'z-index': 10 } as unknown as cytoscape.Css.Node },
           { selector: 'node.newly-added', style: { 'border-width': 2.5, 'border-color': 'oklch(64% 0.18 282)' } as unknown as cytoscape.Css.Node },
+          // Citation-pulse: same purple highlight but more intense and short-lived.
+          { selector: 'node.cite-pulse', style: { 'border-width': 4, 'border-color': 'oklch(70% 0.22 282)', 'z-index': 20 } as unknown as cytoscape.Css.Node },
           {
             selector: 'edge',
             style: {
@@ -303,6 +350,21 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
       seenEdgesRef.current.clear();
     };
   }, [setTooltip]);
+
+  // Citation-pulse: when the chat panel asks us to highlight a node (typically
+  // because a `[N]` citation just streamed into the answer), find it and
+  // briefly add the `cite-pulse` class.
+  const pulseTarget = useQueryStore((s) => s.pulseTarget);
+  useEffect(() => {
+    if (!pulseTarget || !cyReady) return;
+    const cy = cyRef.current;
+    if (!cy) return;
+    const node = cy.getElementById(pulseTarget.parentId);
+    if (node.empty()) return;
+    node.addClass('cite-pulse');
+    const timer = setTimeout(() => node.removeClass('cite-pulse'), 900);
+    return () => clearTimeout(timer);
+  }, [pulseTarget, cyReady]);
 
   // Sync graphData → Cytoscape incrementally.
   useEffect(() => {
@@ -415,6 +477,8 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
           </div>
         )}
       </div>
+
+      <SubQLegend />
 
       <div className="flex items-center gap-3 px-3 h-9 border-t shrink-0 flex-wrap">
         {[

@@ -50,6 +50,16 @@ interface ChatRecord {
   latestQueryId: string | null;
 }
 
+/**
+ * Bumped on every "please pulse this parent-id in the graph" event from the
+ * chat panel. The graph panel subscribes to it; the parentId is what to pulse.
+ * Using a token (tick + value) lets repeated pulses on the same id still fire.
+ */
+export interface PulseTarget {
+  parentId: string;
+  tick: number;
+}
+
 interface QueryState {
   chatList: ChatMeta[];
   currentChatId: string | null;
@@ -60,6 +70,7 @@ interface QueryState {
   latestQueryId: string | null;
   abortController: AbortController | null;
   mode: Mode;
+  pulseTarget: PulseTarget | null;
   setInput: (q: string) => void;
   setActiveTab: (tab: GraphTab) => void;
   setMode: (mode: Mode) => void;
@@ -70,6 +81,8 @@ interface QueryState {
   sendMessage: () => Promise<void>;
   stopGeneration: () => void;
   deleteChat: (chatId: string) => Promise<void>;
+  /** Ask the graph panel to briefly highlight the node with this parent id. */
+  pulseNode: (parentId: string) => void;
 }
 
 const EMPTY_GRAPH: GraphData = { nodes: [], edges: [] };
@@ -111,10 +124,15 @@ export const useQueryStore = create<QueryState>()(persist((set, get) => ({
   latestQueryId: null,
   abortController: null,
   mode: 'graph',
+  pulseTarget: null,
 
   setInput: (input) => set({ input }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setMode: (mode) => set({ mode }),
+
+  pulseNode: (parentId) => set((state) => ({
+    pulseTarget: { parentId, tick: (state.pulseTarget?.tick ?? 0) + 1 },
+  })),
 
   newChatId: () =>
     (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
@@ -287,10 +305,22 @@ export const useQueryStore = create<QueryState>()(persist((set, get) => ({
           patch((m) => ({ ...m, rawText: m.rawText + text }));
         } else if (evt.event === 'done') {
           const timeMs = (data.time_ms as number) ?? 0;
+          const phaseMs = (data.phase_ms as { plan?: number; retrieve?: number; hops?: number; synth?: number } | undefined);
           patch((m) => ({
             ...m,
             loading: false,
-            answer: { ...m.answer, timeMs: timeMs || m.answer.timeMs },
+            answer: {
+              ...m.answer,
+              timeMs: timeMs || m.answer.timeMs,
+              phaseMs: phaseMs
+                ? {
+                    plan: phaseMs.plan ?? 0,
+                    retrieve: phaseMs.retrieve ?? 0,
+                    hops: phaseMs.hops ?? 0,
+                    synth: phaseMs.synth ?? 0,
+                  }
+                : m.answer.phaseMs,
+            },
           }));
           saveSnapshot();
           // Bump updatedAt

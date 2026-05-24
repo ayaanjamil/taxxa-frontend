@@ -4,7 +4,18 @@ export interface GraphNode {
   label: string;
   superseded: boolean;
   desc: string;
+  /** Which sub-question's retrieval surfaced this node. null = graph-walk endpoint. */
+  subIdx?: number | null;
 }
+
+/** Distinct border colors per sub-question index — graph-walk nodes get a neutral border. */
+export const SUBQ_COLORS = [
+  'oklch(64% 0.18 282)',  // purple
+  'oklch(68% 0.15 52)',   // orange
+  'oklch(63% 0.14 148)',  // green
+  'oklch(72% 0.15 200)',  // cyan
+  'oklch(70% 0.18 350)',  // pink
+] as const;
 
 export interface GraphEdge {
   source: string;
