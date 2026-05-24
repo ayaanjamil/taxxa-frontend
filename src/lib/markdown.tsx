@@ -2,6 +2,7 @@
 
 import { Fragment, type ReactNode } from 'react';
 import type { Source } from '@/mock-data/answers';
+import { type CiteIndex, looksLikeCiteId } from '@/lib/citations';
 
 type Block =
   | { kind: 'h1' | 'h2' | 'h3'; text: string }
@@ -41,27 +42,13 @@ function parseBlocks(raw: string): Block[] {
   return blocks;
 }
 
-// Heuristic: real chunk-IDs in this corpus contain `#chunk` or `_` and are
-// long. Tight regex avoids false positives like "[note]" or "[1]".
-function looksLikeCiteId(s: string): boolean {
-  if (s.length < 6) return false;
-  if (/^\d+$/.test(s)) return false;
-  return s.includes('#chunk') || /_/.test(s);
-}
-
-export interface CiteResolver {
-  /** Returns [index, source] where index is 1-based, or [null, null] if unresolved. */
-  resolve: (citeId: string) => [number | null, Source | null];
-}
-
 interface RenderOpts {
-  cite: CiteResolver;
+  cites: CiteIndex;
   onCiteClick?: (parentId: string | null) => void;
 }
 
 function renderInline(text: string, opts: RenderOpts, keyPrefix: string): ReactNode[] {
   const out: ReactNode[] = [];
-  // Combined pattern: **bold** | *italic* | `code` | [cite]
   const re = /(\*\*([^*]+)\*\*)|(`([^`]+)`)|(\*([^*\n]+)\*)|(\[([^\]]+)\])/g;
   let last = 0;
   let key = 0;
@@ -81,16 +68,26 @@ function renderInline(text: string, opts: RenderOpts, keyPrefix: string): ReactN
     } else if (m[7]) {
       const id = m[8];
       if (looksLikeCiteId(id)) {
-        const [idx, src] = opts.cite.resolve(id);
-        out.push(
-          <CiteChip
-            key={`${keyPrefix}-cite-${key++}`}
-            index={idx}
-            citeId={id}
-            source={src}
-            onClick={opts.onCiteClick}
-          />,
-        );
+        const info = opts.cites.byId.get(id);
+        if (info) {
+          out.push(
+            <CiteChip
+              key={`${keyPrefix}-cite-${key++}`}
+              index={info.index}
+              citeId={id}
+              source={info.source}
+              onClick={opts.onCiteClick}
+            />,
+          );
+        } else {
+          // Cite hasn't been registered yet (regex split across tokens during stream).
+          // Render a tiny placeholder; next render will pick it up.
+          out.push(
+            <sup key={`${keyPrefix}-cite-${key++}`} className="mx-px">
+              <span className="inline-block min-w-[1.1rem] h-[1.1rem] rounded-[3px] bg-muted/60 animate-pulse" />
+            </sup>,
+          );
+        }
       } else {
         out.push(<Fragment key={`${keyPrefix}-lit-${key++}`}>{m[0]}</Fragment>);
       }
@@ -101,38 +98,38 @@ function renderInline(text: string, opts: RenderOpts, keyPrefix: string): ReactN
   return out;
 }
 
-interface CiteChipProps {
-  index: number | null;
-  citeId: string;
-  source: Source | null;
-  onClick?: (parentId: string | null) => void;
-}
-
 function shorthand(citeId: string): string {
-  // Prefer the chunk suffix when present.
   const m = citeId.match(/#(chunk\d+)$/i);
   if (m) return `#${m[1]}`;
   return citeId.length > 10 ? '…' + citeId.slice(-9) : citeId;
 }
 
+interface CiteChipProps {
+  index: number;
+  citeId: string;
+  source: Source | null;
+  onClick?: (parentId: string | null) => void;
+}
+
 function CiteChip({ index, citeId, source, onClick }: CiteChipProps) {
-  const resolved = index !== null;
-  const label = resolved ? String(index) : shorthand(citeId);
-  const title = source ? `${source.id} — ${source.label}` : `Unmapped: ${citeId}`;
+  const resolved = source !== null;
+  const title = resolved
+    ? `[${index}] ${source!.id} — ${source!.label}\n${citeId}`
+    : `[${index}] Unmapped chunk — ${citeId}`;
   return (
     <sup className="mx-px">
       <button
         type="button"
         onClick={() => onClick?.(source?.parentId ?? null)}
         title={title}
-        data-cite={index ?? ''}
+        data-cite={index}
         className={
           resolved
             ? 'inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-[3px] text-[10px] font-mono font-medium leading-none bg-primary/12 text-primary hover:bg-primary/22 transition-colors cursor-pointer'
-            : 'inline-flex items-center justify-center h-[1.1rem] px-1.5 rounded-[3px] text-[9.5px] font-mono leading-none bg-muted text-muted-foreground hover:bg-muted/80 transition-colors cursor-help'
+            : 'inline-flex items-center justify-center h-[1.1rem] px-1 rounded-[3px] text-[10px] font-mono font-medium leading-none bg-muted text-muted-foreground hover:bg-muted/80 transition-colors cursor-help'
         }
       >
-        {label}
+        {resolved ? index : `${index}·${shorthand(citeId)}`}
       </button>
     </sup>
   );
@@ -140,36 +137,13 @@ function CiteChip({ index, citeId, source, onClick }: CiteChipProps) {
 
 interface MarkdownAnswerProps {
   raw: string;
-  sources: Source[];
+  cites: CiteIndex;
   onCiteClick?: (parentId: string | null) => void;
 }
 
-/**
- * Build a stable {chunkId -> source-row-index} map. Sources earlier in the
- * list get lower indices, so footnote numbers track source order, not text
- * appearance order — predictable for the reader scanning the sources panel.
- */
-function buildCiteResolver(sources: Source[]): CiteResolver {
-  const chunkToSourceIdx = new Map<string, number>();
-  sources.forEach((s, i) => {
-    for (const cid of s.chunkIds ?? []) {
-      if (!chunkToSourceIdx.has(cid)) chunkToSourceIdx.set(cid, i);
-    }
-  });
-  return {
-    resolve: (citeId) => {
-      const idx = chunkToSourceIdx.get(citeId);
-      if (idx === undefined) return [null, null];
-      return [idx + 1, sources[idx]];
-    },
-  };
-}
-
-export function MarkdownAnswer({ raw, sources, onCiteClick }: MarkdownAnswerProps) {
+export function MarkdownAnswer({ raw, cites, onCiteClick }: MarkdownAnswerProps) {
   if (!raw.trim()) return null;
   const blocks = parseBlocks(raw);
-  const cite = buildCiteResolver(sources);
-
   return (
     <div className="text-[13.5px] leading-relaxed text-foreground/90 space-y-3">
       {blocks.map((b, bi) => {
@@ -177,21 +151,21 @@ export function MarkdownAnswer({ raw, sources, onCiteClick }: MarkdownAnswerProp
         if (b.kind === 'h1') {
           return (
             <h2 key={key} className="text-[15.5px] font-semibold tracking-tight mt-1 mb-1.5 text-foreground">
-              {renderInline(b.text, { cite, onCiteClick }, key)}
+              {renderInline(b.text, { cites, onCiteClick }, key)}
             </h2>
           );
         }
         if (b.kind === 'h2') {
           return (
-            <h3 key={key} className="text-[13.5px] font-semibold tracking-tight mt-2 mb-1 text-foreground/95 uppercase tracking-wide text-[11.5px]">
-              {renderInline(b.text, { cite, onCiteClick }, key)}
+            <h3 key={key} className="font-semibold mt-2 mb-1 text-foreground/95 uppercase tracking-wide text-[11.5px]">
+              {renderInline(b.text, { cites, onCiteClick }, key)}
             </h3>
           );
         }
         if (b.kind === 'h3') {
           return (
             <h4 key={key} className="text-[12.5px] font-semibold mt-1.5 mb-0.5 text-foreground/90">
-              {renderInline(b.text, { cite, onCiteClick }, key)}
+              {renderInline(b.text, { cites, onCiteClick }, key)}
             </h4>
           );
         }
@@ -200,7 +174,7 @@ export function MarkdownAnswer({ raw, sources, onCiteClick }: MarkdownAnswerProp
             <ul key={key} className="list-disc list-outside pl-5 space-y-1 marker:text-muted-foreground/60">
               {b.items.map((it, ii) => (
                 <li key={`${key}-li-${ii}`} className="leading-relaxed">
-                  {renderInline(it, { cite, onCiteClick }, `${key}-li-${ii}`)}
+                  {renderInline(it, { cites, onCiteClick }, `${key}-li-${ii}`)}
                 </li>
               ))}
             </ul>
@@ -208,7 +182,7 @@ export function MarkdownAnswer({ raw, sources, onCiteClick }: MarkdownAnswerProp
         }
         return (
           <p key={key} className="leading-relaxed">
-            {renderInline(b.text, { cite, onCiteClick }, key)}
+            {renderInline(b.text, { cites, onCiteClick }, key)}
           </p>
         );
       })}

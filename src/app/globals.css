@@ -122,3 +122,13 @@
     @apply bg-background text-foreground;
   }
 }
+
+@keyframes tx-source-pulse {
+  0%   { box-shadow: 0 0 0 0 var(--tx-accent); border-color: var(--tx-accent); }
+  60%  { box-shadow: 0 0 0 6px transparent;    border-color: var(--tx-accent); }
+  100% { box-shadow: 0 0 0 0 transparent;      border-color: var(--border); }
+}
+
+.tx-source-pulse {
+  animation: tx-source-pulse 1.4s ease-out;
+}

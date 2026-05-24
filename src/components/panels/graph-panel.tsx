@@ -101,6 +101,28 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
 
   const fitGraph = useCallback(() => { cyRef.current?.fit(undefined, 36); }, []);
 
+  const downloadPng = useCallback(() => {
+    const cy = cyRef.current;
+    if (!cy) return;
+    // Render at 2× for a crisper image; `full: true` exports the whole graph
+    // (not just the visible viewport), bg matches the panel background.
+    const isDark = document.documentElement.classList.contains('dark');
+    const blob = cy.png({
+      output: 'blob',
+      full: true,
+      scale: 2,
+      bg: isDark ? '#101011' : '#ffffff',
+    }) as Blob;
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `taxxa-graph-${tab}-${new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19)}.png`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+  }, [tab]);
+
   const runLayout = useCallback(() => {
     const cy = cyRef.current;
     if (!cy) return;
@@ -307,13 +329,18 @@ export function GraphPanel({ graphData, queryId, tab }: GraphPanelProps) {
           <Button variant="outline" size="icon" className="h-6 w-6" onClick={fitGraph} title="Fit to view">
             <Maximize2 className="h-3 w-3" />
           </Button>
-          <Button variant="outline" size="icon" className="h-6 w-6" title="Export (not yet)">
+          <Button variant="outline" size="icon" className="h-6 w-6" onClick={downloadPng} title="Download as PNG">
             <Download className="h-3 w-3" />
           </Button>
         </div>
       </div>
 
-      <div ref={containerRef} className="relative flex-1 bg-background min-h-0">
+      {/* Wrapper holds the Cytoscape container plus React-managed overlays
+          as SIBLINGS — never as children of the Cytoscape container, because
+          Cytoscape mutates its container's DOM directly and React's reconciler
+          will throw NotFoundError on removeChild when state changes. */}
+      <div className="relative flex-1 min-h-0">
+        <div ref={containerRef} className="absolute inset-0 bg-background" />
         {(!filtered || filtered.nodes.length === 0) && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-2 text-muted-foreground text-xs text-center pointer-events-none">
             <svg width="30" height="30" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" className="opacity-25">

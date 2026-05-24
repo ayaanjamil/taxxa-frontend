@@ -1,11 +1,15 @@
 'use client';
 
 import { create } from 'zustand';
+import { persist, type PersistStorage, type StorageValue } from 'zustand/middleware';
+import { get as idbGet, set as idbSet, del as idbDel } from 'idb-keyval';
 import { EMPTY_ANSWER, type AnswerData, type Source } from '@/mock-data/answers';
 import { type GraphData, type GraphNode, type GraphEdge } from '@/mock-data/graph';
 import { streamSSE } from '@/lib/sse';
 
 const API_URL = process.env.NEXT_PUBLIC_TAXXA_API ?? 'http://localhost:8000/ask';
+const CHAT_KEY_PREFIX = 'taxxa-chat:';
+const META_KEY = 'taxxa-meta';
 
 export type Mode = 'graph' | 'baseline';
 
@@ -18,16 +22,14 @@ export interface UserMessage {
 export interface AssistantMessage {
   id: string;
   role: 'assistant';
-  /** Identifies which query this message belongs to — drives graph reset. */
   queryId: string;
-  /** Live in-flight hop count for the spinner; final value lives on answer.hops. */
   liveHops: number;
   answer: AnswerData;
   graph: GraphData;
   loading: boolean;
-  /** Accumulated synthesis token buffer — rendered as markdown. */
   rawText: string;
   subQuestions: string[];
+  subDone: number[];
   mode: Mode;
 }
 
@@ -35,10 +37,24 @@ export type Message = UserMessage | AssistantMessage;
 
 export type GraphTab = 'traversal' | 'amendments';
 
+export interface ChatMeta {
+  id: string;
+  title: string;
+  createdAt: number;
+  updatedAt: number;
+}
+
+interface ChatRecord {
+  messages: Message[];
+  latestGraph: GraphData | null;
+  latestQueryId: string | null;
+}
+
 interface QueryState {
+  chatList: ChatMeta[];
+  currentChatId: string | null;
   messages: Message[];
   input: string;
-  recentQueries: string[];
   activeTab: GraphTab;
   latestGraph: GraphData | null;
   latestQueryId: string | null;
@@ -47,21 +63,49 @@ interface QueryState {
   setInput: (q: string) => void;
   setActiveTab: (tab: GraphTab) => void;
   setMode: (mode: Mode) => void;
+  /** Switch the store to a given chat id, loading its messages from IDB. */
+  setCurrentChat: (chatId: string) => Promise<void>;
+  /** Generate a new unique chat id (does not mutate state). */
+  newChatId: () => string;
   sendMessage: () => Promise<void>;
   stopGeneration: () => void;
-  loadRecent: (q: string) => void;
+  deleteChat: (chatId: string) => Promise<void>;
 }
 
 const EMPTY_GRAPH: GraphData = { nodes: [], edges: [] };
 
-export const useQueryStore = create<QueryState>((set, get) => ({
+interface PersistedMeta {
+  chatList: ChatMeta[];
+  mode: Mode;
+}
+
+const idbStorage: PersistStorage<PersistedMeta> = {
+  getItem: async (name) => (await idbGet<StorageValue<PersistedMeta>>(name)) ?? null,
+  setItem: async (name, value) => { await idbSet(name, value); },
+  removeItem: async (name) => { await idbDel(name); },
+};
+
+function deriveTitle(messages: Message[]): string {
+  const first = messages.find((m) => m.role === 'user');
+  if (!first) return 'New chat';
+  const t = (first as UserMessage).question.trim();
+  return t.length > 70 ? t.slice(0, 67) + '…' : t;
+}
+
+async function persistChat(chatId: string, record: ChatRecord): Promise<void> {
+  await idbSet(CHAT_KEY_PREFIX + chatId, record);
+}
+
+async function loadChat(chatId: string): Promise<ChatRecord | null> {
+  const r = await idbGet<ChatRecord>(CHAT_KEY_PREFIX + chatId);
+  return r ?? null;
+}
+
+export const useQueryStore = create<QueryState>()(persist((set, get) => ({
+  chatList: [],
+  currentChatId: null,
   messages: [],
   input: '',
-  recentQueries: [
-    'What withholding tax rate applies to a foreign specialist with key-personnel status, and how long is the tax card valid?',
-    'Mikä on pääomatuloveron enimmäisprosentti 2024?',
-    'Under the Finland-Austria double tax treaty, what withholding rate applies to dividends?',
-  ],
   activeTab: 'traversal',
   latestGraph: null,
   latestQueryId: null,
@@ -71,6 +115,42 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   setInput: (input) => set({ input }),
   setActiveTab: (tab) => set({ activeTab: tab }),
   setMode: (mode) => set({ mode }),
+
+  newChatId: () =>
+    (typeof crypto !== 'undefined' && 'randomUUID' in crypto)
+      ? crypto.randomUUID()
+      : `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`,
+
+  setCurrentChat: async (chatId) => {
+    // Cancel any in-flight stream from the previous chat.
+    get().abortController?.abort();
+    set({ currentChatId: chatId, abortController: null, input: '' });
+    const record = await loadChat(chatId);
+    if (record) {
+      // Defensive: if a saved assistant message has loading: true (interrupted
+      // refresh mid-stream), flip it to false so we don't show a stuck spinner.
+      const cleanMessages = record.messages.map((m) =>
+        m.role === 'assistant' && m.loading ? { ...m, loading: false } : m,
+      );
+      set({
+        messages: cleanMessages,
+        latestGraph: record.latestGraph,
+        latestQueryId: record.latestQueryId,
+      });
+    } else {
+      set({ messages: [], latestGraph: null, latestQueryId: null });
+    }
+  },
+
+  deleteChat: async (chatId) => {
+    await idbDel(CHAT_KEY_PREFIX + chatId);
+    set((state) => ({
+      chatList: state.chatList.filter((c) => c.id !== chatId),
+      ...(state.currentChatId === chatId
+        ? { currentChatId: null, messages: [], latestGraph: null, latestQueryId: null }
+        : {}),
+    }));
+  },
 
   stopGeneration: () => {
     const ctrl = get().abortController;
@@ -85,9 +165,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
   },
 
   sendMessage: async () => {
-    const { input, messages, recentQueries, abortController, mode } = get();
+    const { input, messages, abortController, mode, currentChatId, chatList } = get();
     const q = input.trim();
-    if (!q) return;
+    if (!q || !currentChatId) return;
 
     abortController?.abort();
 
@@ -106,15 +186,27 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       loading: true,
       rawText: '',
       subQuestions: [],
+      subDone: [],
       mode,
     };
+
+    const isFirstMessage = messages.length === 0;
 
     set({
       input: '',
       messages: [...messages, userMsg, loadingMsg],
-      recentQueries: [q, ...recentQueries.filter((r) => r !== q)].slice(0, 8),
       latestGraph: EMPTY_GRAPH,
       latestQueryId: queryId,
+    });
+
+    // Upsert the chat meta in the list so it appears immediately in the sidebar.
+    const existing = chatList.find((c) => c.id === currentChatId);
+    const now = Date.now();
+    const meta: ChatMeta = existing
+      ? { ...existing, title: isFirstMessage ? deriveTitle([userMsg]) : existing.title, updatedAt: now }
+      : { id: currentChatId, title: deriveTitle([userMsg]), createdAt: now, updatedAt: now };
+    set({
+      chatList: [meta, ...chatList.filter((c) => c.id !== currentChatId)],
     });
 
     const ctrl = new AbortController();
@@ -133,6 +225,16 @@ export const useQueryStore = create<QueryState>((set, get) => ({
       if (cur && cur.role === 'assistant') set({ latestGraph: cur.graph });
     };
 
+    const saveSnapshot = () => {
+      const s = get();
+      if (s.currentChatId !== currentChatId) return;
+      void persistChat(currentChatId, {
+        messages: s.messages,
+        latestGraph: s.latestGraph,
+        latestQueryId: s.latestQueryId,
+      });
+    };
+
     try {
       for await (const evt of streamSSE(
         API_URL,
@@ -148,6 +250,9 @@ export const useQueryStore = create<QueryState>((set, get) => ({
 
         if (evt.event === 'plan') {
           patch((m) => ({ ...m, subQuestions: (data.sub_questions as string[]) ?? [] }));
+        } else if (evt.event === 'sub_done') {
+          const idx = data.index as number;
+          patch((m) => (m.subDone.includes(idx) ? m : { ...m, subDone: [...m.subDone, idx] }));
         } else if (evt.event === 'entry') {
           const incoming = data.nodes as GraphNode[];
           patch((m) => {
@@ -187,23 +292,34 @@ export const useQueryStore = create<QueryState>((set, get) => ({
             loading: false,
             answer: { ...m.answer, timeMs: timeMs || m.answer.timeMs },
           }));
+          saveSnapshot();
+          // Bump updatedAt
+          set((state) => ({
+            chatList: state.chatList.map((c) =>
+              c.id === currentChatId ? { ...c, updatedAt: Date.now() } : c,
+            ),
+          }));
         }
       }
     } catch (err) {
-      if ((err as Error).name === 'AbortError') return;
+      if ((err as Error).name === 'AbortError') {
+        saveSnapshot();
+        return;
+      }
       console.error('SSE stream error:', err);
       patch((m) => ({
         ...m,
         loading: false,
         rawText: m.rawText || `**Error reaching backend.** ${(err as Error).message}`,
       }));
+      saveSnapshot();
     } finally {
       set({ abortController: null });
     }
   },
-
-  loadRecent: (q) => {
-    set({ input: q });
-    setTimeout(() => get().sendMessage(), 0);
-  },
+}), {
+  name: META_KEY,
+  storage: idbStorage,
+  partialize: (state): PersistedMeta => ({ chatList: state.chatList, mode: state.mode }),
+  version: 2,
 }));

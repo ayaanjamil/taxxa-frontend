@@ -1,10 +1,11 @@
 'use client';
 
-import { useEffect, useMemo, useRef } from 'react';
-import { Loader2, Square, ArrowUp, Network, FileSearch } from 'lucide-react';
+import { useCallback, useEffect, useMemo, useRef } from 'react';
+import { Loader2, Square, ArrowUp, Network, FileSearch, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import { MarkdownAnswer } from '@/lib/markdown';
+import { buildCiteIndex, type CiteIndex } from '@/lib/citations';
 import { cn } from '@/lib/utils';
 import { useQueryStore, type AssistantMessage, type Message, type Mode } from '@/store/query-store';
 import type { Source } from '@/mock-data/answers';
@@ -50,7 +51,9 @@ function MetaRow({ hops, nodes, timeMs, mode }: { hops: number; nodes: number; t
 }
 
 function LoadingState({ message }: { message: AssistantMessage }) {
-  const { subQuestions, liveHops, graph, rawText } = message;
+  const { subQuestions, subDone, liveHops, graph, rawText } = message;
+  const doneSet = useMemo(() => new Set(subDone), [subDone]);
+  const inFlight = subQuestions.length > 0 ? subDone.length : -1;
   const phase =
     rawText.length > 0 ? 'writing'
       : graph.edges.length > 0 ? 'traversing'
@@ -79,13 +82,31 @@ function LoadingState({ message }: { message: AssistantMessage }) {
       </div>
 
       {subQuestions.length > 0 && (
-        <ol className="text-[12px] text-muted-foreground space-y-1.5 pl-0.5">
-          {subQuestions.map((sq, i) => (
-            <li key={i} className="flex gap-2 leading-snug">
-              <span className="font-mono text-[10px] text-muted-foreground/60 mt-0.5 shrink-0">{i + 1}.</span>
-              <span>{sq}</span>
-            </li>
-          ))}
+        <ol className="text-[12px] space-y-1.5 pl-0.5">
+          {subQuestions.map((sq, i) => {
+            const done = doneSet.has(i);
+            const active = !done && i === inFlight;
+            return (
+              <li
+                key={i}
+                className={cn(
+                  'flex gap-2 leading-snug transition-colors',
+                  done ? 'text-foreground/85' : active ? 'text-foreground/95' : 'text-muted-foreground',
+                )}
+              >
+                <span className="mt-0.5 shrink-0 w-3.5 h-3.5 inline-flex items-center justify-center">
+                  {done ? (
+                    <Check className="h-3 w-3 text-emerald-500" strokeWidth={3} />
+                  ) : active ? (
+                    <Loader2 className="h-3 w-3 animate-spin text-primary" />
+                  ) : (
+                    <span className="font-mono text-[10px] text-muted-foreground/60">{i + 1}.</span>
+                  )}
+                </span>
+                <span className={done ? 'line-through decoration-muted-foreground/30 decoration-1' : ''}>{sq}</span>
+              </li>
+            );
+          })}
         </ol>
       )}
     </div>
@@ -103,21 +124,32 @@ function groupSources(sources: Source[]): { key: string; label: string; rows: So
   return Array.from(groups, ([key, g]) => ({ key, ...g }));
 }
 
-function SourcesList({ sources }: { sources: Source[] }) {
+function SourcesList({
+  sources,
+  cites,
+  listRef,
+}: {
+  sources: Source[];
+  cites: CiteIndex;
+  listRef: React.RefObject<HTMLDivElement | null>;
+}) {
   const grouped = useMemo(() => groupSources(sources), [sources]);
   if (!sources.length) return null;
   return (
-    <div className="mt-5">
+    <div className="mt-5" ref={listRef}>
       <p className="text-[10.5px] font-medium uppercase tracking-wide text-muted-foreground mb-2">
         Sources <span className="text-muted-foreground/60 normal-case font-mono">· {sources.length}</span>
       </p>
       <div className="flex flex-col gap-1.5">
         {grouped.map((g) => {
-          // For dot/tag styling, take the first row in the group.
           const head = g.rows[0];
+          const parentIds = g.rows.map((r) => r.parentId).filter(Boolean);
+          // Collect footnote numbers from every parent in this group.
+          const cited = parentIds.flatMap((pid) => cites.bySourceParentId.get(pid) ?? []);
           return (
             <div
               key={g.key}
+              data-source-parents={parentIds.join(' ')}
               className="flex items-start gap-2 px-2.5 py-1.5 rounded-md border bg-muted/30 hover:bg-muted/60 transition-colors"
             >
               <div
@@ -126,6 +158,19 @@ function SourcesList({ sources }: { sources: Source[] }) {
               />
               <div className="flex-1 min-w-0 flex flex-col gap-1">
                 <div className="flex items-center gap-2 min-w-0">
+                  {cited.length > 0 && (
+                    <span className="shrink-0 inline-flex items-center gap-0.5 font-mono text-[10px] font-medium">
+                      {cited.map((info) => (
+                        <span
+                          key={info.id}
+                          title={info.id}
+                          className="inline-flex items-center justify-center min-w-[1.1rem] h-[1.1rem] px-1 rounded-[3px] bg-primary/12 text-primary"
+                        >
+                          {info.index}
+                        </span>
+                      ))}
+                    </span>
+                  )}
                   <span className="text-[12.5px] text-foreground/90 truncate">{g.label}</span>
                   <span
                     className={`shrink-0 text-[9.5px] font-mono font-medium uppercase tracking-wide px-1.5 py-px rounded ${TAG_CLASS[head.tag]}`}
@@ -134,19 +179,15 @@ function SourcesList({ sources }: { sources: Source[] }) {
                   </span>
                 </div>
                 <div className="flex flex-wrap gap-1">
-                  {g.rows.map((row, i) => {
-                    const globalIdx = sources.indexOf(row) + 1;
-                    return (
-                      <span
-                        key={row.id + i}
-                        title={row.id}
-                        className="inline-flex items-center gap-1 font-mono text-[10px] text-foreground/80 bg-background border rounded px-1.5 py-0.5"
-                      >
-                        <span className="text-primary/80 font-medium">[{globalIdx}]</span>
-                        <span className="text-muted-foreground">{row.id}</span>
-                      </span>
-                    );
-                  })}
+                  {g.rows.map((row, i) => (
+                    <span
+                      key={row.id + i}
+                      title={row.id}
+                      className="font-mono text-[10px] text-muted-foreground bg-background border rounded px-1.5 py-0.5"
+                    >
+                      {row.id}
+                    </span>
+                  ))}
                 </div>
               </div>
             </div>
@@ -160,6 +201,23 @@ function SourcesList({ sources }: { sources: Source[] }) {
 function AssistantBubble({ message }: { message: AssistantMessage }) {
   const { answer, rawText, loading } = message;
   const hasContent = rawText.length > 0 || answer.sources.length > 0;
+  const sourcesRef = useRef<HTMLDivElement>(null);
+  const cites = useMemo(() => buildCiteIndex(rawText, answer.sources), [rawText, answer.sources]);
+
+  const handleCiteClick = useCallback((parentId: string | null) => {
+    if (!parentId) return;
+    const root = sourcesRef.current;
+    if (!root) return;
+    // Match against the space-separated list; some grouped rows hold multiple parentIds.
+    const row = Array.from(root.querySelectorAll<HTMLDivElement>('[data-source-parents]'))
+      .find((el) => (el.dataset.sourceParents ?? '').split(' ').includes(parentId));
+    if (!row) return;
+    row.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    row.classList.remove('tx-source-pulse');
+    // Force reflow so the animation re-triggers on consecutive clicks.
+    void row.offsetWidth;
+    row.classList.add('tx-source-pulse');
+  }, []);
 
   if (loading && !hasContent) {
     return <LoadingState message={message} />;
@@ -174,8 +232,8 @@ function AssistantBubble({ message }: { message: AssistantMessage }) {
           <span>Streaming…</span>
         </div>
       )}
-      <MarkdownAnswer raw={rawText} sources={answer.sources} />
-      <SourcesList sources={answer.sources} />
+      <MarkdownAnswer raw={rawText} cites={cites} onCiteClick={handleCiteClick} />
+      <SourcesList sources={answer.sources} cites={cites} listRef={sourcesRef} />
     </div>
   );
 }
@@ -244,7 +302,7 @@ export function ChatPanel() {
         )}
       </div>
 
-      <div className="border-t px-3 py-2 flex items-center gap-2 shrink-0">
+      <div className="border-t px-3 h-9 flex items-center gap-2 shrink-0">
         <ModeToggle mode={mode} setMode={setMode} disabled={isLoading} />
         <Input
           value={input}

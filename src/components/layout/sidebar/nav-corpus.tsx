@@ -25,8 +25,8 @@ export function NavCorpus() {
     <SidebarGroup>
       <SidebarGroupLabel>Corpus</SidebarGroupLabel>
       <SidebarMenu>
-        {CORPUS_GROUPS.map((group, index) => (
-          <Collapsible key={group.id} asChild defaultOpen={index === 0} className="group/collapsible">
+        {CORPUS_GROUPS.map((group) => (
+          <Collapsible key={group.id} asChild defaultOpen className="group/collapsible">
             <SidebarMenuItem>
               <CollapsibleTrigger asChild>
                 <SidebarMenuButton tooltip={group.label}>
