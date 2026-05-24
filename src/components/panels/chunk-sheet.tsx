@@ -55,9 +55,13 @@ interface ChunkSheetProps {
   chunkId: string | null;
   open: boolean;
   onOpenChange: (open: boolean) => void;
+  /** Retrieval score from the most recent ask — null for graph-walk endpoints. */
+  score?: number | null;
+  /** 1-based rank within its sub-question's retrieval — null for graph-walk endpoints. */
+  rank?: number | null;
 }
 
-export function ChunkSheet({ chunkId, open, onOpenChange }: ChunkSheetProps) {
+export function ChunkSheet({ chunkId, open, onOpenChange, score, rank }: ChunkSheetProps) {
   const [data, setData] = useState<ChunkPayload | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
@@ -119,6 +123,29 @@ export function ChunkSheet({ chunkId, open, onOpenChange }: ChunkSheetProps) {
                   chunk {data.chunkIndex + 1}/{data.chunkTotal}
                 </span>
               </div>
+              {(score != null || rank != null) && (
+                <div className="flex items-center gap-2 mb-1">
+                  {rank != null && (
+                    <span
+                      className="font-mono text-[10px] uppercase tracking-wide bg-muted px-1.5 py-0.5 rounded"
+                      title="1-based rank within this sub-question's retrieval (RRF-fused)"
+                    >
+                      rank #{rank}
+                    </span>
+                  )}
+                  {score != null && (
+                    <span
+                      className="font-mono text-[10px] uppercase tracking-wide bg-muted px-1.5 py-0.5 rounded"
+                      title="Reciprocal-Rank Fusion score after Vero/treaty boosts"
+                    >
+                      score {score.toFixed(3)}
+                    </span>
+                  )}
+                  {score == null && rank == null && (
+                    <span className="text-[10px] text-muted-foreground italic">Graph-walk endpoint (no retrieval score)</span>
+                  )}
+                </div>
+              )}
               <SheetTitle className="text-sm leading-snug pr-8">{data.title}</SheetTitle>
               <SheetDescription className="font-mono text-[10.5px] break-all">
                 {data.id}
