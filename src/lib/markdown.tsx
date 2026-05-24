@@ -148,26 +148,26 @@ export function MarkdownAnswer({ raw, cites, onCiteClick }: MarkdownAnswerProps)
   if (!raw.trim()) return null;
   const blocks = parseBlocks(raw);
   return (
-    <div className="text-[13.5px] leading-relaxed text-foreground/90 space-y-3">
+    <div className="text-[13.5px] leading-relaxed text-foreground/90 space-y-3 [text-wrap:pretty]">
       {blocks.map((b, bi) => {
         const key = `b-${bi}`;
         if (b.kind === 'h1') {
           return (
-            <h2 key={key} className="text-[15.5px] font-semibold tracking-tight mt-1 mb-1.5 text-foreground">
+            <h2 key={key} className="text-[15.5px] font-semibold tracking-tight mt-1 mb-1.5 text-foreground [text-wrap:balance]">
               {renderInline(b.text, { cites, onCiteClick }, key)}
             </h2>
           );
         }
         if (b.kind === 'h2') {
           return (
-            <h3 key={key} className="font-semibold mt-2 mb-1 text-foreground/95 uppercase tracking-wide text-[11.5px]">
+            <h3 key={key} className="font-semibold mt-2 mb-1 text-foreground/95 uppercase tracking-wide text-[11.5px] [text-wrap:balance]">
               {renderInline(b.text, { cites, onCiteClick }, key)}
             </h3>
           );
         }
         if (b.kind === 'h3') {
           return (
-            <h4 key={key} className="text-[12.5px] font-semibold mt-1.5 mb-0.5 text-foreground/90">
+            <h4 key={key} className="text-[12.5px] font-semibold mt-1.5 mb-0.5 text-foreground/90 [text-wrap:balance]">
               {renderInline(b.text, { cites, onCiteClick }, key)}
             </h4>
           );

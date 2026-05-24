@@ -51,11 +51,10 @@ export function WorkspacePanel() {
   }, []);
 
   return (
-    <div className="flex flex-1 overflow-hidden">
+    <div className="flex flex-1 overflow-hidden flex-col md:flex-row">
       <div
         ref={graphRef}
-        style={{ width: '52%' }}
-        className="flex flex-col border-r overflow-hidden h-full"
+        className="flex flex-col overflow-hidden flex-1 md:flex-none md:w-[52%] min-h-0 border-b md:border-b-0 md:border-r"
       >
         <div className="flex items-center h-9 border-b shrink-0 px-1 gap-1">
           <SidebarTrigger className="h-7 w-7 shrink-0" />
@@ -78,7 +77,7 @@ export function WorkspacePanel() {
             </button>
           ))}
           {nodeCount != null && (
-            <div className="ml-auto flex items-center gap-2 text-[11px] font-mono pr-2">
+            <div className="ml-auto flex items-center gap-2 text-[11px] font-mono tabular-nums pr-2">
               <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
                 <span className="w-[5px] h-[5px] rounded-full bg-emerald-500" />
                 <span className="text-foreground">{nodeCount}</span>
@@ -102,7 +101,7 @@ export function WorkspacePanel() {
       </div>
 
       <div
-        className="w-px bg-border hover:bg-primary/50 cursor-col-resize shrink-0 relative transition-colors after:absolute after:inset-y-0 after:-left-1 after:-right-1"
+        className="hidden md:block w-px bg-border hover:bg-primary/50 cursor-col-resize shrink-0 relative transition-colors after:absolute after:inset-y-0 after:-left-1 after:-right-1"
         onMouseDown={onMouseDown}
       />
 

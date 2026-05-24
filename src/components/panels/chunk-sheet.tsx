@@ -119,7 +119,7 @@ export function ChunkSheet({ chunkId, open, onOpenChange, score, rank }: ChunkSh
                 {data.date && (
                   <span className="text-[10px] text-muted-foreground font-mono">{data.date}</span>
                 )}
-                <span className="text-[10px] text-muted-foreground font-mono ml-auto">
+                <span className="text-[10px] text-muted-foreground font-mono ml-auto mr-8">
                   chunk {data.chunkIndex + 1}/{data.chunkTotal}
                 </span>
               </div>

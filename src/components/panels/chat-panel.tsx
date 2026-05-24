@@ -1,6 +1,7 @@
 'use client';
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { motion, AnimatePresence } from 'motion/react';
 import { Loader2, Square, ArrowUp, Network, FileSearch, Check, Copy, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
@@ -43,7 +44,7 @@ function MetaRow({
 }) {
   const fmt = (ms: number) => (ms >= 1000 ? `${(ms / 1000).toFixed(1)}s` : `${Math.round(ms)}ms`);
   return (
-    <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono flex-wrap min-w-0 flex-1">
+    <div className="flex items-center gap-2 text-[11px] text-muted-foreground font-mono flex-wrap min-w-0 flex-1 tabular-nums">
       <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-muted/60">
         <span className="w-[5px] h-[5px] rounded-full bg-emerald-500" />
         {mode === 'graph' ? 'Graph' : 'Baseline'}
@@ -96,7 +97,7 @@ function LoadingState({ message }: { message: AssistantMessage }) {
         <Loader2 className="h-3 w-3 animate-spin text-primary" />
         <span className="font-medium">{phaseLabel[phase]}</span>
         {(liveHops > 0 || graph.nodes.length > 0) && (
-          <span className="font-mono text-muted-foreground/80">
+          <span className="font-mono tabular-nums text-muted-foreground/80">
             · {graph.nodes.length} nodes · {liveHops} hops
           </span>
         )}
@@ -260,18 +261,37 @@ function CopyButton({ text }: { text: string }) {
           /* no-op — older browsers without clipboard permission */
         }
       }}
-      title="Copy answer as markdown"
-      className="ml-auto inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10.5px] text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+      title={copied ? 'Copied to clipboard' : 'Copy answer as markdown'}
+      aria-label={copied ? 'Copied' : 'Copy'}
+      // Fixed visual size so the icon swap never reflows the meta row.
+      // Pseudo-element extends the hit area to ~40px without changing layout.
+      className="relative ml-auto inline-flex items-center justify-center h-6 w-6 rounded text-muted-foreground hover:text-foreground hover:bg-muted active:scale-[0.96] [transition-property:background-color,color,scale] duration-150 before:absolute before:-inset-2 before:content-['']"
     >
-      {copied ? (
-        <>
-          <Check className="h-3 w-3 text-emerald-500" /> Copied
-        </>
-      ) : (
-        <>
-          <Copy className="h-3 w-3" /> Copy
-        </>
-      )}
+      <AnimatePresence initial={false} mode="wait">
+        {copied ? (
+          <motion.span
+            key="check"
+            initial={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+            transition={{ type: 'spring', duration: 0.3, bounce: 0 }}
+            className="absolute inset-0 flex items-center justify-center"
+          >
+            <Check className="h-3.5 w-3.5 text-emerald-500" strokeWidth={3} />
+          </motion.span>
+        ) : (
+          <motion.span
+            key="copy"
+            initial={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+            animate={{ opacity: 1, scale: 1, filter: 'blur(0px)' }}
+            exit={{ opacity: 0, scale: 0.25, filter: 'blur(4px)' }}
+            transition={{ type: 'spring', duration: 0.3, bounce: 0 }}
+            className="absolute inset-0 flex items-center justify-center"
+          >
+            <Copy className="h-3.5 w-3.5" />
+          </motion.span>
+        )}
+      </AnimatePresence>
     </button>
   );
 }
@@ -365,7 +385,8 @@ function ModeToggle({ mode, setMode, disabled }: { mode: Mode; setMode: (m: Mode
         disabled={disabled}
         onClick={() => setMode('graph')}
         className={cn(
-          'inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-[3px] transition-colors',
+          // Concentric border-radius: outer rounded-md (6px) - p-0.5 (2px) = 4px inner.
+          'inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-[4px] active:scale-[0.96] [transition-property:background-color,color,scale] duration-150',
           mode === 'graph'
             ? 'bg-primary text-primary-foreground font-medium'
             : 'text-muted-foreground hover:text-foreground',
@@ -380,7 +401,8 @@ function ModeToggle({ mode, setMode, disabled }: { mode: Mode; setMode: (m: Mode
         disabled={disabled}
         onClick={() => setMode('baseline')}
         className={cn(
-          'inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-[3px] transition-colors',
+          // Concentric border-radius: outer rounded-md (6px) - p-0.5 (2px) = 4px inner.
+          'inline-flex items-center gap-1 h-6 px-2 text-[11px] rounded-[4px] active:scale-[0.96] [transition-property:background-color,color,scale] duration-150',
           mode === 'baseline'
             ? 'bg-primary text-primary-foreground font-medium'
             : 'text-muted-foreground hover:text-foreground',
@@ -445,11 +467,11 @@ export function ChatPanel() {
           className="flex-1 h-8 text-sm border-0 bg-transparent focus-visible:ring-0 focus-visible:ring-offset-0 px-0 shadow-none"
         />
         {isLoading ? (
-          <Button size="xs" variant="outline" onClick={stopGeneration} className="shrink-0 gap-1" title="Stop generation">
+          <Button size="xs" variant="outline" onClick={stopGeneration} className="shrink-0 gap-1 active:scale-[0.96] [transition-property:background-color,color,scale]" title="Stop generation">
             <Square className="h-3 w-3" /> Stop
           </Button>
         ) : (
-          <Button size="xs" onClick={sendMessage} disabled={!input.trim()} className="shrink-0 gap-1">
+          <Button size="xs" onClick={sendMessage} disabled={!input.trim()} className="shrink-0 gap-1 active:scale-[0.96] [transition-property:background-color,color,scale]">
             <ArrowUp className="h-3 w-3" /> Ask
           </Button>
         )}

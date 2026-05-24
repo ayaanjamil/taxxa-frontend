@@ -20,6 +20,11 @@ if (typeof window !== 'undefined') {
   cytoscape.use(dagre);
 }
 
+// Stable empty array so the zustand selector below doesn't return a fresh
+// reference on every render when there's no assistant message yet (which
+// would trigger an infinite re-render loop via getServerSnapshot caching).
+const EMPTY_SUBQ: readonly string[] = [];
+
 function SubQLegend() {
   const subQuestions = useQueryStore((s) => {
     // Use the last assistant message's sub-questions — that's the one whose
@@ -28,7 +33,7 @@ function SubQLegend() {
       const m = s.messages[i];
       if (m.role === 'assistant') return m.subQuestions;
     }
-    return [];
+    return EMPTY_SUBQ as string[];
   });
   if (!subQuestions || subQuestions.length === 0) return null;
   return (
