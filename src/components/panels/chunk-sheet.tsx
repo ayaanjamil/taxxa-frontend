@@ -10,6 +10,28 @@ import {
   SheetTitle,
 } from '@/components/ui/sheet';
 
+// Lightweight visually-hidden span — avoids pulling in @radix-ui/react-visually-hidden
+// just to satisfy Radix's a11y requirement that a Dialog always has a Title.
+function VisuallyHidden({ children }: { children: React.ReactNode }) {
+  return (
+    <span
+      style={{
+        position: 'absolute',
+        width: 1,
+        height: 1,
+        padding: 0,
+        margin: -1,
+        overflow: 'hidden',
+        clip: 'rect(0,0,0,0)',
+        whiteSpace: 'nowrap',
+        borderWidth: 0,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
 const API_BASE = (process.env.NEXT_PUBLIC_TAXXA_API ?? 'http://localhost:8000/ask').replace(/\/ask\/?$/, '');
 
 interface ChunkPayload {
@@ -60,14 +82,24 @@ export function ChunkSheet({ chunkId, open, onOpenChange }: ChunkSheetProps) {
   return (
     <Sheet open={open} onOpenChange={onOpenChange}>
       <SheetContent side="right" className="!max-w-xl w-[42rem] sm:!max-w-xl">
+        {/* Title is required by Radix a11y; visually hidden while loading/erroring. */}
+        {!data && (
+          <VisuallyHidden>
+            <SheetTitle>{loading ? 'Loading chunk' : 'Chunk preview'}</SheetTitle>
+          </VisuallyHidden>
+        )}
         {loading && (
           <div className="flex items-center justify-center h-full text-muted-foreground gap-2 text-sm">
             <Loader2 className="h-4 w-4 animate-spin" /> Loading chunk…
           </div>
         )}
         {error && (
-          <div className="p-6 text-sm text-destructive">
-            Failed to load chunk: {error}
+          <div className="p-6 text-sm">
+            <p className="text-destructive font-medium mb-2">Failed to load chunk</p>
+            <p className="text-muted-foreground">{error}</p>
+            <p className="text-muted-foreground text-[11px] mt-3">
+              Is the backend running? The <span className="font-mono">/chunk</span> endpoint is new — restart uvicorn if you upgraded recently.
+            </p>
           </div>
         )}
         {data && (
